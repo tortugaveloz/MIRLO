@@ -9,7 +9,7 @@
 
 The `riscv32imafc` Rust target doesn't exist as something you can install via `rustup`, and for some reason the `rustc` args to add additional architecture extensions don't work, so instead we use a custom build target. Luckily Cargo lets you set a local target via a JSON file; this can be found as `riscv32imafc-unknown-none-elf.json` in each of the Rust platform directories (unfortunately I can't seem to make it work from a single, central location). We use the base `riscv32imac` toolchain that is officially supported, and add in the (single-precision) FPU operations (`f`).
 
-This custom target is specified in `/.cargo/config.toml`, at the root of the workspace (and repo). This file sets up our custom JSON target, adds additional linker arguments, enables building `core` and `alloc` core crates for this new target (requires nightly) and provides additional envvars to fix compilation with `cc` for any C/C++ dependencies.
+This custom target is specified in `lang/rust/.cargo/config.toml`, next to the workspace (`lang/rust/Cargo.toml`). This file sets up our custom JSON target, adds additional linker arguments, enables building `core` and `alloc` core crates for this new target (requires nightly) and provides additional envvars to fix compilation with `cc` for any C/C++ dependencies.
 
 Finally, your parent level Rust crate requires a properly set up linker path. If you will always be building from a static location (say from the root of the directory), you can set this path in `.cargo/config.toml`:
 
@@ -67,7 +67,7 @@ Two crates are provided for an improved Rust coding experience:
 
 ## Building
 
-As stated above, you need to ensure you have the `/.cargo/config.toml` and `riscv32imafc-unknown-none-elf.json` files in your workspace directory, and the linker path update code in `build.rs`.
+As stated above, you need to ensure you have the `.cargo/config.toml` and `riscv32imafc-unknown-none-elf.json` files in your workspace directory, and the linker path update code in `build.rs`.
 
 If you have updated your LiteX platform, register locations and other constants may have changed, and thus you need to rebuild the `litex-pac` crate. You will want to execute `make` in `/lang/rust/crates/litex-pac`. This converts the `/litex/pocket.svd` file into Rust code to access the registers in a safe manner.
 
