@@ -1,0 +1,15 @@
+# Verilator unit test for rtl/vpu/GeomSetupUnit.v through the Vpu4DFixed CFU
+VERILATOR ?= verilator
+VPU  = ../../rtl/vpu
+VSRC = $(VPU)/Vpu4DFixed.v $(VPU)/GeomSetupUnit.v
+VFLAGS = --cc --exe --build -O3 -I$(VPU) -Wno-fatal -Wno-WIDTH -Wno-UNOPTFLAT -Wno-CASEINCOMPLETE \
+         -Wno-UNUSED -Wno-BLKANDNBLK --top-module Vpu4DFixed --Mdir obj_dir_setup -DSU_WLOAD
+
+all: run
+obj_dir_setup/VVpu4DFixed: tb_setupunit.cpp $(VSRC)
+	$(VERILATOR) $(VFLAGS) $(VSRC) tb_setupunit.cpp -o VVpu4DFixed
+run: obj_dir_setup/VVpu4DFixed
+	./obj_dir_setup/VVpu4DFixed
+clean:
+	rm -rf obj_dir_setup
+.PHONY: all run clean

@@ -1,0 +1,21 @@
+# Verilator unit test for rtl/vpu/Vpu4DFixed.v (parallel fixed-point matvec)
+VERILATOR ?= verilator
+VPU  = ../../rtl/vpu
+
+VSRC = $(VPU)/Vpu4DFixed.v $(VPU)/GeomSetupUnit.v
+
+VFLAGS = --cc --exe --build -I$(VPU) -Wno-fatal -Wno-WIDTH -Wno-UNOPTFLAT -Wno-CASEINCOMPLETE \
+         -Wno-UNUSED -Wno-BLKANDNBLK --top-module Vpu4DFixed --Mdir obj_dir_fixed
+
+all: run
+
+obj_dir_fixed/VVpu4DFixed: tb_vpu4dfixed.cpp $(VSRC)
+	$(VERILATOR) $(VFLAGS) $(VSRC) tb_vpu4dfixed.cpp -o VVpu4DFixed
+
+run: obj_dir_fixed/VVpu4DFixed
+	./obj_dir_fixed/VVpu4DFixed
+
+clean:
+	rm -rf obj_dir_fixed
+
+.PHONY: all run clean

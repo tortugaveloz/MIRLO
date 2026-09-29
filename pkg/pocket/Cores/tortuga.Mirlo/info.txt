@@ -1,0 +1,4 @@
+Mirlo: a LiteX RISC-V computer for the Analogue Pocket, with MRDP
+
+Based on openfpga-litex by agg23. Built with LiteX,
+VexRiscv and MRDP (an N64-style rasterizer).

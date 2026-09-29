@@ -1,0 +1,7 @@
+set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) "mrdp/mrdp_top.v"]
+set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) "mrdp/mrdp_pix.v"]
+set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) "mrdp/mrdp_mem.v"]
+set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) "mrdp/mrdp_sdpram.v"]
+set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) "mrdp/mrdp_rcp_rom.v"]
+set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) "mrdp/mrdp_seed_rom.v"]
+set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) "mrdp/mrdp_ucode_rom.v"]
