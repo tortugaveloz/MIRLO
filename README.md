@@ -29,21 +29,28 @@ Three RISC-V cores, a rasterizer and the Pocket's peripherals:
 
 The register reference is [docs/control.md](docs/control.md); the machine-readable version is [litex/pocket.svd](litex/pocket.svd).
 
+## Installing on the Pocket
+
+1. Download `tortuga.Mirlo_<version>.zip` from the [releases](https://github.com/tortugaveloz/MIRLO/releases).
+2. Unzip it onto the **root** of the Pocket's SD card, merging with the folders already there. It adds only Mirlo's own files:
+
+   ```
+   Assets/mirlo/common/          where Mirlo's games go (empty)
+   Cores/tortuga.Mirlo/          the core: riscv.rev (the bitstream), core.json, ...
+   Platforms/mirlo.json          the platform, under Computer
+   Platforms/_images/mirlo.bin   its image
+   ```
+
+3. Put the games (`.bin` files) in `Assets/mirlo/common/`. Mirlo needs one to start: the release carries none; build one with the SDK (see [Writing software](#writing-software)) or get a Mirlo game such as [Super Mirlo 64](https://github.com/tortugaveloz/supermirlo64).
+4. On the Pocket: **openFPGA → Computer → Mirlo**, then pick a game.
+
+Saves (`.sav`) appear in `Saves/mirlo/common/` when you quit a game. To update the core, unzip a newer release the same way; it replaces the files in `Cores/tortuga.Mirlo/`.
+
 ## Using the core
 
-### On the SD card
+### Games
 
-Copy `pkg/pocket/` to the SD card's root, and add the bitstream (see [Building the hardware](#building-the-hardware)):
-
-```
-Cores/tortuga.Mirlo/        core.json, data.json, interact.json, ..., riscv.rev
-Platforms/mirlo.json
-Platforms/_images/mirlo.bin
-Assets/mirlo/common/        your games: *.bin
-Saves/mirlo/common/         saves (*.sav, created by the core)
-```
-
-The core appears under **Computer**. When you launch it, the Pocket asks for a game: any `.bin` in `Assets/mirlo/common/`.
+When you launch Mirlo, the Pocket asks for a game: any `.bin` in `Assets/mirlo/common/`.
 * The Pocket itself loads the file into SDRAM, with its own loading bar.
 * The BIOS then jumps to the program at `0x4000_0000`.
 
@@ -109,7 +116,8 @@ cd ../../../litex && make     # SoC again: the geometry firmware is baked into i
 
 cd ../projects
 quartus_sh --flow compile openFPGA-RISC-V_pocket
-python3 ../tools/package_bitstream.py output_files/openFPGA-RISC-V_pocket.rbf ../pkg/pocket/Cores/tortuga.Mirlo/riscv.rev
+python3 ../tools/package_bitstream.py output_files/openFPGA-RISC-V_pocket.rbf riscv.rev   # bit-reversed, as the Pocket wants it
+python3 ../tools/make_release.py riscv.rev tortuga.Mirlo_0.8.2.zip                          # the SD-card zip
 ```
 
 The geometry core's firmware is part of the bitstream. So is the CSR map compiled into it: after changing either, repeat the whole sequence (see [docs/geometry_core.md](docs/geometry_core.md)).
