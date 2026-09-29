@@ -1,0 +1,10 @@
+[package]
+name = "litex-openfpga"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+embedded-hal = "0.2.7"
+litex-hal = "0.3.0"
+litex-pac = { path = "../litex-pac", features = ["rt"] }
+num-traits = { version = "0.2", default-features = false }

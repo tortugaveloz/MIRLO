@@ -1,0 +1,471 @@
+diff --git a/src/main/scala/vexriscv/GenCoreAudio.scala b/src/main/scala/vexriscv/GenCoreAudio.scala
+new file mode 100644
+index 00000000..bbb84b3f
+--- /dev/null
++++ b/src/main/scala/vexriscv/GenCoreAudio.scala
+@@ -0,0 +1,91 @@
++package vexriscv
++
++/* Audio core: rv32i + Zmmul (MulPlugin, NO DivPlugin), no FPU, no caches,
++ * no CFU. It plays the N64 RSP's audio role (runs the ABI2 command list that
++ * src/audio/synthesis.c builds) plus the AI's (feeds PCM to the APF audio
++ * FIFO), on its own 8 KiB IMEM + 8 KiB DMEM.
++ *
++ * Both buses are the plugins' native simple buses, not Wishbone: the local
++ * memories answer in one cycle with cmd.ready held high, so fetch streams an
++ * instruction per cycle (IBusSimple keeps several fetches in flight) and a
++ * local load/store costs no bus handshake. rtl/audio/AudioCore.v decodes the
++ * dBus between DMEM, the control registers and a Wishbone master to the SoC
++ * (SDRAM, CSRs).
++ *
++ * Reset vector 0x8000_0000 = IMEM (the SoC's uncached I/O region, where the
++ * game CPU loads the image before releasing reset). Traps go to
++ * IMEM + 0x20; mcause/mepc/mtval are readable so the handler can report.
++ */
++
++import spinal.core._
++import spinal.lib._
++import vexriscv.plugin._
++
++object GenCoreAudio {
++  def main(args: Array[String]) {
++    SpinalConfig(netlistFileName = "VexRiscvAudio.v", globalPrefix = "VexRiscvAudio_").generateVerilog {
++      val plugins = List[Plugin[VexRiscv]](
++        new IBusSimplePlugin(
++          resetVector = 0x80000000l,
++          cmdForkOnSecondStage = false,
++          cmdForkPersistence = false,
++          prediction = STATIC,
++          catchAccessFault = false,
++          compressedGen = false,
++          busLatencyMin = 1
++        ),
++        new DBusSimplePlugin(
++          catchAddressMisaligned = false,
++          catchAccessFault = false,
++          earlyInjection = false
++        ),
++        new DecoderSimplePlugin(catchIllegalInstruction = true),
++        new RegFilePlugin(regFileReadyKind = plugin.SYNC, zeroBoot = false),
++        new IntAluPlugin,
++        new SrcPlugin(separatedAddSub = false, executeInsertion = true),
++        new FullBarrelShifterPlugin,
++        new HazardSimplePlugin(
++          bypassExecute = true,
++          bypassMemory = true,
++          bypassWriteBack = true,
++          bypassWriteBackBuffer = true,
++          pessimisticUseSrc = false,
++          pessimisticWriteRegFile = false,
++          pessimisticAddressMatch = false
++        ),
++        new BranchPlugin(earlyBranch = false, catchAddressMisaligned = false),
++        new CsrPlugin(CsrPluginConfig.smallest(mtvecInit = 0x80000020l).copy(
++          mepcAccess = CsrAccess.READ_ONLY,
++          mbadaddrAccess = CsrAccess.READ_ONLY
++        )),
++        new MulPlugin
++        // NO DivPlugin, NO FpuPlugin, NO caches.
++      )
++      // AUDIO_CFU=1 (default): the audio DSP ops of rtl/audio/AudioDspCfu.v
++      // (envelope mixer + resampler), same custom-0 encoding as the geom core:
++      // function_id = {funct3, funct7}.
++      val cfu = sys.env.getOrElse("AUDIO_CFU", "1") != "0"
++      val cfuPlugin = new CfuPlugin(
++        stageCount = 1,
++        allowZeroLatency = true,
++        encodings = List(
++          CfuPluginEncoding(
++            instruction = M"-------------------------0001011",
++            functionId = List(31 downto 25, 14 downto 12),
++            input2Kind = CfuPlugin.Input2Kind.RS
++          )
++        ),
++        busParameter = CfuBusParameter(
++          CFU_VERSION = 0, CFU_INTERFACE_ID_W = 0, CFU_FUNCTION_ID_W = 10, CFU_REORDER_ID_W = 0,
++          CFU_REQ_RESP_ID_W = 0, CFU_INPUTS = 2, CFU_INPUT_DATA_W = 32, CFU_OUTPUTS = 1,
++          CFU_OUTPUT_DATA_W = 32, CFU_FLOW_REQ_READY_ALWAYS = false, CFU_FLOW_RESP_READY_ALWAYS = false,
++          CFU_WITH_STATUS = false, CFU_RAW_INSN_W = 0, CFU_CFU_ID_W = 0, CFU_STATE_INDEX_NUM = 0
++        ),
++        withEnable = false
++      )
++      val cpu = new VexRiscv(VexRiscvConfig(if (cfu) plugins :+ cfuPlugin else plugins))
++      cpu.setDefinitionName("VexRiscvAudio")
++      cpu
++    }
++  }
++}
+diff --git a/src/main/scala/vexriscv/GenCoreGeomCfu.scala b/src/main/scala/vexriscv/GenCoreGeomCfu.scala
+new file mode 100644
+index 00000000..aabb8e22
+--- /dev/null
++++ b/src/main/scala/vexriscv/GenCoreGeomCfu.scala
+@@ -0,0 +1,189 @@
++package vexriscv
++
++/* Geometry core: rv32im (M extension only, no FpuPlugin) plus the
++ * CfuPlugin for rtl/vpu/Vpu4DFixed.v (a parallel fixed-point matrix-vector
++ * engine). Like the N64's RSP, this core has no floating-point hardware:
++ * its firmware computes in S15.16 fixed point.
++ *
++ * Instruction encoding: R-type custom-0 opcode (0001011); the CfuPlugin
++ * delivers function_id = {funct3, funct7} (SpinalHDL Cat() puts its first
++ * argument in the low bits), matching Vpu4DFixed.v's cmd_function_id[9:0];
++ * operand 2 from rs2 (CfuPlugin.Input2Kind.RS, not an immediate).
++ */
++
++import spinal.core._
++import spinal.lib._
++import vexriscv.ip.{DataCacheConfig, InstructionCacheConfig}
++import vexriscv.plugin._
++import vexriscv.plugin.CsrAccess.WRITE_ONLY
++
++/* GEOM_DTCM=1: the geom RAM (GEOM_DTCM_BASE, 16 KiB) as a tightly coupled data
++ * port (DBusCachedPlugin's own TCM path): loads and stores to it bypass the
++ * write-through D-cache -- one cycle, no refills, no bus. Exported as dTcm_*. */
++class GeomDTcmPlugin(base: BigInt, bits: Int) extends Plugin[VexRiscv] {
++  var bus: TightlyCoupledDataBus = null
++  override def setup(pipeline: VexRiscv): Unit = {
++    val d = pipeline.plugins.collectFirst { case p: DBusCachedPlugin => p }.get
++    bus = d.newTightlyCoupledPort(a => a(31 downto bits) === U(base >> bits, (32 - bits) bits))
++  }
++  override def build(pipeline: VexRiscv): Unit = {}
++}
++
++object GenCoreGeomCfu {
++  def main(args: Array[String]) {
++    SpinalConfig(netlistFileName = "VexRiscv_GeomCfu.v").generateVerilog {
++      // GEOM_IBUS=simple: no instruction cache -- instructions straight from
++      // the geom ROM through a second read port, one per cycle (the ROM is
++      // on-chip: the cache only duplicated it, and its misses cost ~6 % of a
++      // frame). The native simple bus (iBus_cmd_* / iBus_rsp_*) is exported.
++      val simpleIbus = sys.env.getOrElse("GEOM_IBUS", "cached") == "simple"
++      val ibusPlugin: Plugin[VexRiscv] = if (simpleIbus) new IBusSimplePlugin(
++          resetVector = null,
++          cmdForkOnSecondStage = false,
++          cmdForkPersistence = false,
++          prediction = STATIC,
++          catchAccessFault = false,
++          // GEOM_RVC=1: the C extension (16-bit instructions); GEOM_INJ=0:
++          // no injector stage between the fetch response and decode
++          compressedGen = sys.env.getOrElse("GEOM_RVC", "0") != "0",
++          injectorStage = sys.env.getOrElse("GEOM_INJ", "1") != "0",
++          busLatencyMin = 1,
++          pendingMax = 3
++        ) else new IBusCachedPlugin(
++          resetVector = null,
++          prediction = STATIC,
++          compressedGen = false,
++          config = InstructionCacheConfig(
++            // GEOM_ICACHE=<bytes> (default 4096). Direct-mapped either way.
++            cacheSize = sys.env.getOrElse("GEOM_ICACHE", "4096").toInt,
++            bytePerLine = 32,
++            wayCount = 1,
++            addressWidth = 32,
++            cpuDataWidth = 32,
++            memDataWidth = 32,
++            catchIllegalAccess = true,
++            catchAccessFault = true,
++            asyncTagMemory = false,
++            twoCycleRam = false,
++            twoCycleCache = true
++          )
++        )
++      val plugins = List[Plugin[VexRiscv]](
++        ibusPlugin,
++        new DBusCachedPlugin(
++          dBusCmdMasterPipe = true,
++          dBusCmdSlavePipe = true,
++          dBusRspSlavePipe = false,
++          tightlyCoupledRelaxed = sys.env.getOrElse("GEOM_DTCM_RELAX", "0").toInt,
++          config = new DataCacheConfig(
++            // GEOM_DCACHE=<bytes> (default 4096), GEOM_DWAYS (default 1)
++            cacheSize = sys.env.getOrElse("GEOM_DCACHE", "4096").toInt,
++            bytePerLine = 32,
++            wayCount = sys.env.getOrElse("GEOM_DWAYS", "1").toInt,
++            addressWidth = 32,
++            cpuDataWidth = 32,
++            memDataWidth = 32,
++            catchAccessError = true,
++            catchIllegal = true,
++            catchUnaligned = true,
++            withLrSc = false,
++            withAmo = false,
++            earlyWaysHits = true
++          ),
++          csrInfo = true
++        ),
++        new StaticMemoryTranslatorPlugin(ioRange = _.msb),
++        new DecoderSimplePlugin(catchIllegalInstruction = true),
++        new RegFilePlugin(regFileReadyKind = plugin.SYNC, zeroBoot = false),
++        new IntAluPlugin,
++        new SrcPlugin(separatedAddSub = false, executeInsertion = true),
++        new FullBarrelShifterPlugin,
++        new HazardSimplePlugin(
++          bypassExecute = true,
++          bypassMemory = true,
++          bypassWriteBack = true,
++          bypassWriteBackBuffer = true,
++          pessimisticUseSrc = false,
++          pessimisticWriteRegFile = false,
++          pessimisticAddressMatch = false
++        ),
++        new BranchPlugin(earlyBranch = false, catchAddressMisaligned = true),
++        new CsrPlugin(CsrPluginConfig.all(mtvecInit = null)),
++        new MulPlugin,
++        new ExternalInterruptArrayPlugin(
++          machineMaskCsrId = 0xBC0,
++          machinePendingsCsrId = 0xFC0,
++          supervisorMaskCsrId = 0x9C0,
++          supervisorPendingsCsrId = 0xDC0
++        ),
++        // NO FpuPlugin here -- this is the whole point of this generator.
++        new CfuPlugin(
++          stageCount = 1,
++          allowZeroLatency = true,
++          encodings = List(
++            CfuPluginEncoding(
++              instruction = M"-------------------------0001011",
++              functionId = List(31 downto 25, 14 downto 12),
++              input2Kind = CfuPlugin.Input2Kind.RS
++            )
++          ),
++          busParameter = CfuBusParameter(
++            CFU_VERSION = 0,
++            CFU_INTERFACE_ID_W = 0,
++            CFU_FUNCTION_ID_W = 10,
++            CFU_REORDER_ID_W = 0,
++            CFU_REQ_RESP_ID_W = 0,
++            CFU_INPUTS = 2,
++            CFU_INPUT_DATA_W = 32,
++            CFU_OUTPUTS = 1,
++            CFU_OUTPUT_DATA_W = 32,
++            CFU_FLOW_REQ_READY_ALWAYS = false,
++            CFU_FLOW_RESP_READY_ALWAYS = false,
++            CFU_WITH_STATUS = false,
++            CFU_RAW_INSN_W = 0,
++            CFU_CFU_ID_W = 0,
++            CFU_STATE_INDEX_NUM = 0
++          ),
++          withEnable = false   // no CSR gate -- the CFU instructions are always legal,
++                                // matching how Vpu4D.v was used before (no enable dance
++                                // in firmware)
++        ),
++        new YamlPlugin("VexRiscv_GeomCfu.yaml")
++      )
++
++      // GEOM_DIV=0: no DivPlugin -- rv32i + Zmmul. The geom firmware has no
++      // divide left (fx_recip goes through the CFU's RECIPN), so the divider
++      // is dead area. Default 1 (rv32im) keeps the old netlist reproducible.
++      val withDiv = sys.env.getOrElse("GEOM_DIV", "1") != "0"
++      val withDTcm = sys.env.getOrElse("GEOM_DTCM", "0") != "0"
++      // GEOM_DTCM_BASE: the RAM's base (hex), 16 KiB aligned
++      val dtcm = new GeomDTcmPlugin(BigInt(sys.env.getOrElse("GEOM_DTCM_BASE", "20004000"), 16), 14)
++      val plugins2 = if (withDTcm) plugins :+ dtcm else plugins
++      val cpuConfig = VexRiscvConfig(if (withDiv) plugins2 :+ new DivPlugin else plugins2)
++      val cpu = new VexRiscv(cpuConfig)
++      cpu.rework {
++        for (plugin <- cpuConfig.plugins) plugin match {
++          case plugin: IBusCachedPlugin => {
++            plugin.iBus.setAsDirectionLess()
++            master(plugin.iBus.toWishbone()).setName("iBusWishbone")
++          }
++          case plugin: DBusCachedPlugin => {
++            plugin.dBus.setAsDirectionLess()
++            master(plugin.dBus.toWishbone()).setName("dBusWishbone")
++          }
++          case _ =>
++        }
++        if (withDTcm) {
++          val t = master(TightlyCoupledDataBus()).setName("dTcm")
++          t.enable := dtcm.bus.enable
++          t.address := dtcm.bus.address
++          t.write_enable := dtcm.bus.write_enable
++          t.write_data := dtcm.bus.write_data
++          t.write_mask := dtcm.bus.write_mask
++          dtcm.bus.read_data := t.read_data
++        }
++      }
++      cpu
++    }
++  }
++}
+diff --git a/src/main/scala/vexriscv/demo/smp/VexRiscvSmpCluster.scala b/src/main/scala/vexriscv/demo/smp/VexRiscvSmpCluster.scala
+index 854828f3..b5a64a73 100644
+--- a/src/main/scala/vexriscv/demo/smp/VexRiscvSmpCluster.scala
++++ b/src/main/scala/vexriscv/demo/smp/VexRiscvSmpCluster.scala
+@@ -33,7 +33,8 @@ case class VexRiscvSmpClusterParameter(cpuConfigs : Seq[VexRiscvConfig],
+                                        outOfOrderDecoder : Boolean = true,
+                                        fpu : Boolean = false,
+                                        privilegedDebug : Boolean = false,
+-                                       hardwareBreakpoints : Int = 0)
++                                       hardwareBreakpoints : Int = 0,
++                                       withDebug : Boolean = true)   // false: no JTAG debug bridge / DebugPlugin at all
+ 
+ class VexRiscvSmpClusterBase(p : VexRiscvSmpClusterParameter) extends Area with PostInitCallback{
+   val cpuCount = p.cpuConfigs.size
+@@ -55,7 +56,7 @@ class VexRiscvSmpClusterBase(p : VexRiscvSmpClusterParameter) extends Area with
+ 
+   implicit val interconnect = BmbInterconnectGenerator()
+ 
+-  val customDebug = !p.privilegedDebug generate new Area {
++  val customDebug = (!p.privilegedDebug && p.withDebug) generate new Area {
+     val debugBridge = debugCd.outputClockDomain on JtagInstructionDebuggerGenerator(p.jtagHeaderIgnoreWidth)
+     debugBridge.jtagClockDomain.load(ClockDomain.external("jtag", withReset = false))
+ 
+@@ -87,7 +88,9 @@ class VexRiscvSmpClusterBase(p : VexRiscvSmpClusterParameter) extends Area with
+     )
+ 
+     cpu.hardwareBreakpointCount.load(p.hardwareBreakpoints)
+-    if(!p.privilegedDebug) {
++    if(!p.withDebug) {
++      cpu.disableDebug()   // no debug access at all
++    } else if(!p.privilegedDebug) {
+       cpu.enableDebugBmb(
+         debugCd = debugCd.outputClockDomain,
+         resetCd = systemCd,
+@@ -206,7 +209,11 @@ class VexRiscvSmpClusterWithPeripherals(p : VexRiscvSmpClusterParameter) extends
+     plic.priorityWidth.load(2)
+     plic.mapping.load(PlicMapping.sifive)
+     plic.addTarget(core.cpu.externalInterrupt)
+-    plic.addTarget(core.cpu.externalSupervisorInterrupt)
++    // Only a CPU with supervisor mode has this interrupt; a machine-only one
++    // (withSupervisor = false) never provides the handle and elaboration
++    // would wait on it forever.
++    if (core.cpu.config.plugins.exists { case c: CsrPlugin => c.config.supervisorGen; case _ => false })
++      plic.addTarget(core.cpu.externalSupervisorInterrupt)
+     List(clint.logic, core.cpu.logic).produce {
+       for (plugin <- core.cpu.config.plugins) plugin match {
+         case plugin: CsrPlugin if plugin.utime != null => plugin.utime := clint.logic.io.time
+diff --git a/src/main/scala/vexriscv/demo/smp/VexRiscvSmpLitexCluster.scala b/src/main/scala/vexriscv/demo/smp/VexRiscvSmpLitexCluster.scala
+index 9a8aefe8..63af917a 100644
+--- a/src/main/scala/vexriscv/demo/smp/VexRiscvSmpLitexCluster.scala
++++ b/src/main/scala/vexriscv/demo/smp/VexRiscvSmpLitexCluster.scala
+@@ -19,6 +19,7 @@ case class VexRiscvLitexSmpClusterParameter( cluster : VexRiscvSmpClusterParamet
+                                              coherentDma : Boolean,
+                                              wishboneMemory : Boolean,
+                                              cpuPerFpu : Int,
++                                             fpuDouble : Boolean,
+                                              exposeTime : Boolean)
+ 
+ 
+@@ -45,7 +46,7 @@ class VexRiscvLitexSmpCluster(p : VexRiscvLitexSmpClusterParameter) extends VexR
+       new FpuCore(
+         portCount = group.size,
+         p =  FpuParameter(
+-          withDouble = true,
++          withDouble = p.fpuDouble,
+           asyncRegFile = false,
+           schedulerM2sPipe = extraStage
+         )
+@@ -121,8 +122,11 @@ object VexRiscvLitexSmpClusterCmdGen extends App {
+   var outOfOrderDecoder = true
+   var aesInstruction = false
+   var fpu = false
++  var fpuDouble = false
+   var cpuPerFpu = 4
+   var rvc = false
++  // Bare-metal trims (Pocket): no MMU, machine mode only, no LR/SC/AMO.
++  var mmu, supervisor, atomic, debug = true
+   var netlistDirectory = "."
+   var netlistName = "VexRiscvLitexSmpCluster"
+   var iTlbSize = 4
+@@ -149,8 +153,13 @@ object VexRiscvLitexSmpClusterCmdGen extends App {
+     opt[String]("wishbone-memory" ) action { (v, c) => wishboneMemory = v.toBoolean  }
+     opt[String]("wishbone-force-32b" ) action { (v, c) => wishboneForce32b = v.toBoolean  }
+     opt[String]("fpu" ) action { (v, c) => fpu = v.toBoolean  }
++    opt[String]("fpu-double" ) action { (v, c) => fpuDouble = v.toBoolean  }
+     opt[String]("cpu-per-fpu") action { (v, c) => cpuPerFpu = v.toInt }
+     opt[String]("rvc") action { (v, c) => rvc = v.toBoolean }
++    opt[String]("mmu") action { (v, c) => mmu = v.toBoolean }
++    opt[String]("supervisor") action { (v, c) => supervisor = v.toBoolean }
++    opt[String]("atomic") action { (v, c) => atomic = v.toBoolean }
++    opt[String]("debug") action { (v, c) => debug = v.toBoolean }
+     opt[String]("itlb-size") action { (v, c) => iTlbSize = v.toInt }
+     opt[String]("dtlb-size") action { (v, c) => dTlbSize = v.toInt }
+     opt[String]("expose-time") action { (v, c) => exposeTime = v.toBoolean }
+@@ -175,13 +184,16 @@ object VexRiscvLitexSmpClusterCmdGen extends App {
+           iBusRelax = true,
+           earlyBranch = true,
+           withFloat = fpu,
+-          withDouble = fpu,
++          withDouble = fpuDouble,
+           externalFpu = fpu,
+-          loadStoreWidth = if(fpu) 64 else 32,
++          loadStoreWidth = if(fpuDouble) 64 else 32,
+           rvc = rvc,
+           injectorStage = rvc,
+           iTlbSize = iTlbSize,
+-          dTlbSize = dTlbSize
++          dTlbSize = dTlbSize,
++          withMmu = mmu,
++          withSupervisor = supervisor,
++          atomic = atomic
+         )
+         if(aesInstruction) c.add(new AesPlugin)
+         c
+@@ -192,13 +204,15 @@ object VexRiscvLitexSmpClusterCmdGen extends App {
+       fpu = fpu,
+       jtagHeaderIgnoreWidth = 0,
+       privilegedDebug = privilegedDebug,
+-      hardwareBreakpoints = hardwareBreakpoints
++      hardwareBreakpoints = hardwareBreakpoints,
++      withDebug = debug
+     ),
+     liteDram = LiteDramNativeParameter(addressWidth = 32, dataWidth = liteDramWidth),
+     liteDramMapping = SizeMapping(0x40000000l, 0x40000000l),
+     coherentDma = coherentDma,
+     wishboneMemory = wishboneMemory,
+     cpuPerFpu = cpuPerFpu,
++    fpuDouble = fpuDouble,
+     exposeTime = exposeTime
+   )
+ 
+@@ -276,6 +290,7 @@ object VexRiscvLitexSmpClusterOpenSbi extends App{
+     coherentDma = false,
+     wishboneMemory = false,
+     cpuPerFpu = 4,
++    fpuDouble = false,
+     exposeTime = false
+   )
+ 
+diff --git a/src/main/scala/vexriscv/plugin/DBusCachedPlugin.scala b/src/main/scala/vexriscv/plugin/DBusCachedPlugin.scala
+index 593eb911..c368f2f7 100644
+--- a/src/main/scala/vexriscv/plugin/DBusCachedPlugin.scala
++++ b/src/main/scala/vexriscv/plugin/DBusCachedPlugin.scala
+@@ -53,7 +53,15 @@ class DBusCachedPlugin(val config : DataCacheConfig,
+                        dBusRspSlavePipe : Boolean = false,
+                        relaxedMemoryTranslationRegister : Boolean = false,
+                        csrInfo : Boolean = false,
+-                       tightlyCoupledAddressStage : Boolean = false)  extends Plugin[VexRiscv] with DBusAccessService with DBusEncodingService with VexRiscvRegressionArg {
++                       tightlyCoupledAddressStage : Boolean = false,
++                       // 1: only memory instructions hit the tightly coupled ports
++                       // (upstream tests every instruction's SRC_ADD, so an lui/addi
++                       // whose sum lands in a TCM range stalls behind a side
++                       // effect); 2: also no stall of TCM LOADS behind side effects;
++                       // 3: TCM stores stall only behind D-cache accesses (whose redo
++                       // could flush them), not behind branches -- a store on the
++                       // wrong path of a branch is instead dropped by !isFlushed
++                       tightlyCoupledRelaxed : Int = 0)  extends Plugin[VexRiscv] with DBusAccessService with DBusEncodingService with VexRiscvRegressionArg {
+   import config._
+   assert(!(config.withExternalAmo && !dBusRspSlavePipe))
+   assert(isPow2(cacheSize))
+@@ -427,12 +435,15 @@ class DBusCachedPlugin(val config : DataCacheConfig,
+         }
+ 
+         insert(MEMORY_TIGHTLY) := B(tightlyCoupledPorts.map(_.p.hit(input(SRC_ADD).asUInt)))
+-        when(insert(MEMORY_TIGHTLY).orR){
++        when(insert(MEMORY_TIGHTLY).orR && (if (tightlyCoupledRelaxed >= 1) input(MEMORY_ENABLE) else True)){
+           cache.io.cpu.execute.isValid := False
+-          arbitration.haltItself setWhen(stages.dropWhile(_ != execute).tail.map(s => s.arbitration.isValid && s.input(HAS_SIDE_EFFECT)).orR)
++          arbitration.haltItself setWhen((if (tightlyCoupledRelaxed >= 2) input(MEMORY_WR) else True) &&
++            stages.dropWhile(_ != execute).tail.map(s => s.arbitration.isValid && s.input(HAS_SIDE_EFFECT) &&
++              (if (tightlyCoupledRelaxed >= 3) s.input(MEMORY_ENABLE) else True)).orR)
+         }
+         for((port, sel) <- (tightlyCoupledPorts, input(MEMORY_TIGHTLY).asBools).zipped){
+-          port.bus.enable       := arbitration.isValid && input(MEMORY_ENABLE) && sel && !arbitration.isStuck
++          port.bus.enable       := arbitration.isValid && input(MEMORY_ENABLE) && sel && !arbitration.isStuck &&
++                                   (if (tightlyCoupledRelaxed >= 3) !arbitration.isFlushed else True)
+ 
+           port.bus.address      := Delay(input(SRC_ADD), tightlyCoupledAddressStage.toInt).asUInt.resized
+           port.bus.write_enable := input(MEMORY_WR)

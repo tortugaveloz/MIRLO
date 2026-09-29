@@ -1,0 +1,1124 @@
+diff --git a/litex/build/openocd.py b/litex/build/openocd.py
+index 2a8f4768..74637648 100644
+--- a/litex/build/openocd.py
++++ b/litex/build/openocd.py
+@@ -48,6 +48,9 @@ class OpenOCD(GenericProgrammer):
+         # Intel Max10.
+         elif "10m50" in cfg_str:
+             chain = 0xc
++        # Intel Cyclone V (fixed-function USER1 instruction, 10-bit IR).
++        elif "cyclonev_jtag" in cfg_str:
++            chain = 0x00e
+         # Xilinx ZynqMP.
+         elif "zynqmp" in cfg_str:
+             chain = {
+diff --git a/litex/soc/cores/cpu/vexriscv_smp/core.py b/litex/soc/cores/cpu/vexriscv_smp/core.py
+index 4031dc70..175b7014 100755
+--- a/litex/soc/cores/cpu/vexriscv_smp/core.py
++++ b/litex/soc/cores/cpu/vexriscv_smp/core.py
+@@ -53,10 +53,17 @@ class VexRiscvSMP(CPU):
+     wishbone_memory      = False
+     wishbone_force_32b   = False
+     with_fpu             = False
++    with_fpu_double      = False
+     cpu_per_fpu          = 4
+     with_rvc             = False
+     dtlb_size            = 4
+     itlb_size            = 4
++    # Bare-metal trims (Pocket): False drops the MMU (static translation),
++    # supervisor mode (machine-only CSRs) or LR/SC/AMO respectively.
++    with_mmu             = True
++    with_supervisor      = True
++    with_atomic          = True
++    with_debug           = True   # False: no JTAG debug bridge / DebugPlugin
+ 
+     # Command line configuration arguments.
+     @staticmethod
+@@ -77,12 +84,17 @@ class VexRiscvSMP(CPU):
+         cpu_group.add_argument("--with-privileged-debug",        action="store_true", help="Enable official RISC-V debug spec")
+         cpu_group.add_argument("--hardware-breakpoints",        default=1,           help="Number of hardware breapoints", type=int)
+         cpu_group.add_argument("--wishbone-force-32b",           action="store_true", help="Force the wishbone bus to be 32 bits")
+-        cpu_group.add_argument("--with-fpu",                     action="store_true", help="Enable the F32/F64 FPU")
++        cpu_group.add_argument("--with-fpu",                     action="store_true", help="Enable the F32 FPU")
++        cpu_group.add_argument("--with-fpu-double",              action="store_true", help="Enable F64 (double-precision) support in the FPU. Requires --with-fpu.")
+         cpu_group.add_argument("--cpu-per-fpu",                  default="4",         help="Maximal ratio between CPU count and FPU count. Will instanciate as many FPU as necessary.")
+         cpu_group.add_argument("--with-rvc",                     action="store_true", help="Enable RISC-V compressed instruction support")
+         cpu_group.add_argument("--dtlb-size",                    default=4,           help="Data TLB size.")
+         cpu_group.add_argument("--itlb-size",                    default=4,           help="Instruction TLB size.")
+         cpu_group.add_argument("--expose-time",                  action="store_true", help="Add CLINT time output.")
++        cpu_group.add_argument("--without-mmu",                  action="store_true", help="No MMU (static memory translation).")
++        cpu_group.add_argument("--without-supervisor",           action="store_true", help="Machine mode only.")
++        cpu_group.add_argument("--without-atomic",               action="store_true", help="No LR/SC/AMO (rv32im..., not rv32ima...).")
++        cpu_group.add_argument("--without-debug",                action="store_true", help="No JTAG CPU debug (bridge and DebugPlugin).")
+ 
+     @staticmethod
+     def args_read(args):
+@@ -112,6 +124,8 @@ class VexRiscvSMP(CPU):
+         if(args.wishbone_force_32b):           VexRiscvSMP.wishbone_force_32b    = True
+         if(args.with_fpu):
+             VexRiscvSMP.with_fpu     = True
++        if(args.with_fpu_double):
++            VexRiscvSMP.with_fpu_double = True
+             VexRiscvSMP.icache_width = 64
+             VexRiscvSMP.dcache_width = 64 # Required for F64
+         if(args.cpu_per_fpu):
+@@ -120,21 +134,32 @@ class VexRiscvSMP(CPU):
+             VexRiscvSMP.with_rvc = True
+         if(args.dtlb_size): VexRiscvSMP.dtlb_size = int(args.dtlb_size)
+         if(args.itlb_size): VexRiscvSMP.itlb_size = int(args.itlb_size)
++        if(args.without_mmu):        VexRiscvSMP.with_mmu        = False
++        if(args.without_supervisor): VexRiscvSMP.with_supervisor = False
++        if(args.without_atomic):     VexRiscvSMP.with_atomic     = False
++        if(args.without_debug):      VexRiscvSMP.with_debug      = False
+ 
+     # ABI.
+     @staticmethod
+     def get_abi():
+         abi = "ilp32"
+-        if VexRiscvSMP.with_fpu:
+-            abi +="d"
++        # ABI suffixes are mutually exclusive (ilp32 < ilp32f < ilp32d, "d" is
++        # a superset of "f" for calling-convention purposes) -- unlike the
++        # arch string below, these do not concatenate.
++        if VexRiscvSMP.with_fpu_double:
++            abi += "d"
++        elif VexRiscvSMP.with_fpu:
++            abi += "f"
+         return abi
+ 
+     # Arch.
+     @staticmethod
+     def get_arch():
+-        arch = "rv32i2p0_ma"
++        arch = "rv32i2p0_m" + ("a" if VexRiscvSMP.with_atomic else "")
+         if VexRiscvSMP.with_fpu:
+-            arch += "fd"
++            arch += "f"
++        if VexRiscvSMP.with_fpu_double:
++            arch += "d"
+         if VexRiscvSMP.with_rvc:
+             arch += "c"
+         return arch
+@@ -188,10 +213,14 @@ class VexRiscvSMP(CPU):
+         f"{'_Ood'  if VexRiscvSMP.out_of_order_decoder else ''}" \
+         f"{'_Wm'   if VexRiscvSMP.wishbone_memory      else ''}" \
+         f"{'_Wf32' if VexRiscvSMP.wishbone_force_32b   else ''}" \
+-        f"{'_Fpu' + str(VexRiscvSMP.cpu_per_fpu)  if VexRiscvSMP.with_fpu else ''}" \
++        f"{'_Fpu' + str(VexRiscvSMP.cpu_per_fpu) + ('D' if VexRiscvSMP.with_fpu_double else '') if VexRiscvSMP.with_fpu else ''}" \
+         f"{'_Pd'   if VexRiscvSMP.privileged_debug else ''}" \
+         f"{'_Hb' + str(VexRiscvSMP.hardware_breakpoints) if VexRiscvSMP.hardware_breakpoints > 0 else ''}" \
+-        f"{'_Rvc'  if VexRiscvSMP.with_rvc else ''}"
++        f"{'_Rvc'  if VexRiscvSMP.with_rvc else ''}" \
++        f"{'_Nmmu' if not VexRiscvSMP.with_mmu else ''}" \
++        f"{'_Nsv'  if not VexRiscvSMP.with_supervisor else ''}" \
++        f"{'_Na'   if not VexRiscvSMP.with_atomic else ''}" \
++        f"{'_Ndbg' if not VexRiscvSMP.with_debug else ''}"
+ 
+     # Default Configs Generation.
+     @staticmethod
+@@ -282,12 +311,17 @@ class VexRiscvSMP(CPU):
+         gen_args.append(f"--wishbone-memory={VexRiscvSMP.wishbone_memory}")
+         if(VexRiscvSMP.wishbone_force_32b): gen_args.append(f"--wishbone-force-32b={VexRiscvSMP.wishbone_force_32b}")
+         gen_args.append(f"--fpu={VexRiscvSMP.with_fpu}")
++        gen_args.append(f"--fpu-double={VexRiscvSMP.with_fpu_double}")
+         gen_args.append(f"--cpu-per-fpu={VexRiscvSMP.cpu_per_fpu}")
+         gen_args.append(f"--rvc={VexRiscvSMP.with_rvc}")
+         gen_args.append(f"--netlist-name={VexRiscvSMP.cluster_name}")
+         gen_args.append(f"--netlist-directory={vdir}")
+         gen_args.append(f"--dtlb-size={VexRiscvSMP.dtlb_size}")
+         gen_args.append(f"--itlb-size={VexRiscvSMP.itlb_size}")
++        gen_args.append(f"--mmu={VexRiscvSMP.with_mmu}")
++        gen_args.append(f"--supervisor={VexRiscvSMP.with_supervisor}")
++        gen_args.append(f"--atomic={VexRiscvSMP.with_atomic}")
++        gen_args.append(f"--debug={VexRiscvSMP.with_debug}")
+ 
+         cmd = 'cd {path} && sbt "runMain vexriscv.demo.smp.VexRiscvLitexSmpClusterCmdGen {args}"'.format(path=os.path.join(vdir, "ext", "VexRiscv"), args=" ".join(gen_args))
+         subprocess.check_call(cmd, shell=True)
+@@ -326,16 +360,6 @@ class VexRiscvSMP(CPU):
+             # Interrupts.
+             i_interrupts = self.interrupt,
+ 
+-            # JTAG.
+-            i_jtag_clk          = self.jtag_clk,
+-            i_debugPort_enable  = self.jtag_enable,
+-            i_debugPort_capture = self.jtag_capture,
+-            i_debugPort_shift   = self.jtag_shift,
+-            i_debugPort_update  = self.jtag_update,
+-            i_debugPort_reset   = self.jtag_reset,
+-            i_debugPort_tdi     = self.jtag_tdi,
+-            o_debugPort_tdo     = self.jtag_tdo,
+-
+             # Peripheral Bus (Master).
+             o_peripheral_CYC      = pbus.cyc,
+             o_peripheral_STB      = pbus.stb,
+@@ -350,6 +374,19 @@ class VexRiscvSMP(CPU):
+             o_peripheral_BTE      = pbus.bte
+         )
+ 
++        # JTAG (CPU debug) -- absent from a --without-debug netlist.
++        if VexRiscvSMP.with_debug:
++            self.cpu_params.update(
++                i_jtag_clk          = self.jtag_clk,
++                i_debugPort_enable  = self.jtag_enable,
++                i_debugPort_capture = self.jtag_capture,
++                i_debugPort_shift   = self.jtag_shift,
++                i_debugPort_update  = self.jtag_update,
++                i_debugPort_reset   = self.jtag_reset,
++                i_debugPort_tdi     = self.jtag_tdi,
++                o_debugPort_tdo     = self.jtag_tdo,
++            )
++
+         # DMA.
+         if VexRiscvSMP.coherent_dma:
+             self.dma_bus = dma_bus = wishbone.Interface(data_width=VexRiscvSMP.dcache_width, address_width=32, addressing="word")
+@@ -529,7 +566,7 @@ class VexRiscvSMP(CPU):
+ 
+         # When no Direct Memory Bus, do memory accesses through Wishbone Peripheral Bus.
+         if len(self.memory_buses) == 0:
+-            if VexRiscvSMP.with_fpu and (not VexRiscvSMP.wishbone_memory and not VexRiscvSMP.wishbone_force_32b):
++            if VexRiscvSMP.with_fpu_double and (not VexRiscvSMP.wishbone_memory and not VexRiscvSMP.wishbone_force_32b):
+                 raise ValueError("No Direct Memory Bus found, please add --with-wishbone-memory or --wishbone-force-32b to your build command.")
+             else:
+                 VexRiscvSMP.wishbone_memory = True
+diff --git a/litex/soc/software/bios/boot.c b/litex/soc/software/bios/boot.c
+index c6b90cb1..fc57e9cf 100755
+--- a/litex/soc/software/bios/boot.c
++++ b/litex/soc/software/bios/boot.c
+@@ -81,37 +81,72 @@ enum {
+ /*-----------------------------------------------------------------------*/
+ 
+ #ifdef ROM_BOOT_ADDRESS
+-/* Running the application code from ROM is the fastest way to execute code
+-   and could be interesting when the code is small enough, on large devices
+-   where many blockrams are available or simply when the execution speed is
+-   critical. Defining ROM_BOOT_ADDRESS in the SoC will make the BIOS jump to
+-   it at boot. */
+-void romboot(void)
+-{	
+-	printf("Requesting slot 0 program download to 0x%08x\n", ROM_BOOT_ADDRESS);
+-
+-	apf_bridge_slot_id_write(0);
+-	apf_bridge_data_offset_write(0);
+-
+-	// Entire file
+-	long size = apf_bridge_file_size_read();
+-
+-	printf("Requesting read of size 0x%08lx\n", size);
+-
+-	// TODO: Pocket bug prevents us from simply passing 0xFFFFFFFF
+-	apf_bridge_transfer_length_write(size);
+-	apf_bridge_ram_data_address_write(ROM_BOOT_ADDRESS);
++/* Mirlo (Analogue Pocket): slot 0 is the game the user picked. The Pocket
++ * loads it into SDRAM at ROM_BOOT_ADDRESS itself (data.json: not deferload)
++ * and shows its own loading bar; the BIOS only waits for that and jumps. A
++ * game file may end in a MIRLODATA block table (tools/make_mirlo_game.py);
++ * the game reads its blocks, the BIOS does not need it. */
++#ifdef CSR_VIDEO_FRAMEBUFFER_DMA_BASE_ADDR
++static volatile uint16_t *const romboot_fb = (volatile uint16_t *)VIDEO_FRAMEBUFFER_BASE;
++#endif
+ 
+-	apf_bridge_request_read_write(1);
++/* Black screen as soon as SDRAM works: the framebuffer survives a core
++ * relaunch in SDRAM, and the video scan-out showed the previous run's last
++ * frame. main() calls this right after DRAM init, and romboot() again once
++ * the Pocket has loaded slot 0 (the file lands on the framebuffer too). */
++void romboot_screen(void)
++{
++#ifdef CSR_VIDEO_FRAMEBUFFER_DMA_BASE_ADDR
++	for (int i = 0; i < VIDEO_FRAMEBUFFER_HRES * VIDEO_FRAMEBUFFER_VRES; i++)
++		romboot_fb[i] = 0;
++	video_framebuffer_dma_base_write(VIDEO_FRAMEBUFFER_BASE);
++	video_framebuffer_dma_enable_write(1);
++#endif
++}
+ 
+-	while (apf_bridge_status_read() != 1) {
+-		// Stall until bridge read completes
+-		asm("");
++/* At launch the Pocket loads slot 0 itself (its own loading bar), through
++ * the bridge straight into SDRAM at ROM_BOOT_ADDRESS, and releases the core's
++ * reset when done. Its write requests are held busy until boot_ready
++ * (core_top.sv), so main() calls this as soon as the DRAM works -- before the
++ * banner and before touching the framebuffer or starting the video DMA: the
++ * bridge's path into SDRAM (apf_wishbone_master) has no backpressure, and
++ * with the BIOS busy on the bus during the load the Pocket failed it ("RW:
++ * target not responding"). So only a CSR is polled until the load is over.
++ * A JTAG serial-boot upload then also lands after it; romboot() waits for
++ * the rest. */
++static int romboot_from_host;   /* the Pocket loaded slot 0 at this launch */
++
++void romboot_host_load(void)
++{
++#ifdef CSR_APF_BRIDGE_BOOT_READY_ADDR
++	apf_bridge_boot_ready_write(1);
++	/* reset_n still low: a launch, the Pocket is loading. Already released:
++	 * nothing to wait for (a bitstream loaded over JTAG, for instance). */
++	if (apf_bridge_host_state_read() & 1)
++		return;
++#ifdef CSR_TIMER0_UPTIME_CYCLES_ADDR
++	timer0_uptime_latch_write(1);
++	uint64_t t0 = timer0_uptime_cycles_read();
++	while (!(apf_bridge_host_state_read() & 1)) {
++		timer0_uptime_latch_write(1);
++		if (timer0_uptime_cycles_read() - t0 > 20ull * CONFIG_CLOCK_FREQUENCY)
++			return;
+ 	}
++#endif
++	romboot_from_host = (apf_bridge_host_state_read() & 2) != 0;
++#endif
++}
+ 
+-	printf("Booting slot 0\n");
+-	
+-	boot(0, 0, 0, ROM_BOOT_ADDRESS);
++void romboot(void)
++{
++#ifdef CSR_APF_BRIDGE_BOOT_READY_ADDR
++	if (romboot_from_host) {
++		romboot_screen();
++		printf("Booting slot 0 (loaded by the Pocket)\n");
++		boot(0, 0, 0, ROM_BOOT_ADDRESS);
++	}
++#endif
++	printf("No game loaded by the Pocket\n");
+ }
+ #endif
+ 
+@@ -122,7 +157,19 @@ void romboot(void)
+ #ifdef CSR_UART_BASE
+ 
+ #define ACK_TIMEOUT_DELAY CONFIG_CLOCK_FREQUENCY/4
+-#define CMD_TIMEOUT_DELAY CONFIG_CLOCK_FREQUENCY/4
++/* Widened from CONFIG_CLOCK_FREQUENCY/4 (~250ms @ 57MHz): the timer is loaded
++ * once when the frame's FIRST byte arrives and must not expire before the
++ * LAST byte of that same frame arrives (see serialboot()'s receive loop
++ * below) -- over the Pocket's JTAG-UART relay (openocd TCL-RPC + batched
++ * drscan, not a real full-speed serial link), completing even a small SFL
++ * frame can take much longer than 250ms under load, causing a mid-frame
++ * timeout -> SFL_ACK_ERROR -> the BIOS resyncs waiting for a fresh frame
++ * header while the host side is still mid-retransmit of the OLD frame, a
++ * real protocol desync (not simple packet loss) that no amount of host-side
++ * retrying can recover from. 10s comfortably covers the JTAG relay's worst
++ * case and is harmless for the normal full-speed serial cartridge boot path
++ * (frames there complete in microseconds regardless of this ceiling). */
++#define CMD_TIMEOUT_DELAY CONFIG_CLOCK_FREQUENCY*10
+ 
+ static void timer0_load(unsigned int value) {
+ 	timer0_en_write(0);
+diff --git a/litex/soc/software/bios/boot.h b/litex/soc/software/bios/boot.h
+index 338312d0..b19757f3 100644
+--- a/litex/soc/software/bios/boot.h
++++ b/litex/soc/software/bios/boot.h
+@@ -10,6 +10,8 @@ int serialboot(void);
+ void netboot(int nb_params, char **params);
+ void flashboot(void);
+ void romboot(void);
++void romboot_screen(void);
++void romboot_host_load(void);
+ void sdcardboot(void);
+ void sataboot(void);
+ 
+diff --git a/litex/soc/software/bios/main.c b/litex/soc/software/bios/main.c
+index 61942a24..f8ae64dd 100644
+--- a/litex/soc/software/bios/main.c
++++ b/litex/soc/software/bios/main.c
+@@ -1,252 +1,269 @@
+-// This file is Copyright (c) 2013-2014 Sebastien Bourdeauducq <sb@m-labs.hk>
+-// This file is Copyright (c) 2014-2019 Florent Kermarrec <florent@enjoy-digital.fr>
+-// This file is Copyright (c) 2015 Yann Sionneau <ys@m-labs.hk>
+-// This file is Copyright (c) 2015 whitequark <whitequark@whitequark.org>
+-// This file is Copyright (c) 2019 Ambroz Bizjak <ambrop7@gmail.com>
+-// This file is Copyright (c) 2019 Caleb Jamison <cbjamo@gmail.com>
+-// This file is Copyright (c) 2018 Dolu1990 <charles.papon.90@gmail.com>
+-// This file is Copyright (c) 2018 Felix Held <felix-github@felixheld.de>
+-// This file is Copyright (c) 2019 Gabriel L. Somlo <gsomlo@gmail.com>
+-// This file is Copyright (c) 2018 Jean-François Nguyen <jf@lambdaconcept.fr>
+-// This file is Copyright (c) 2018 Sergiusz Bazanski <q3k@q3k.org>
+-// This file is Copyright (c) 2016 Tim 'mithro' Ansell <mithro@mithis.com>
+-// This file is Copyright (c) 2020 Franck Jullien <franck.jullien@gmail.com>
+-// This file is Copyright (c) 2020 Antmicro <www.antmicro.com>
+-
+-// License: BSD
+-
+-#include <stdio.h>
+-#include <stdlib.h>
+-#include <string.h>
+-#include <system.h>
+-#include <irq.h>
+-
+-#include "boot.h"
+-#include "readline.h"
+-#include "helpers.h"
+-#include "command.h"
+-
+-#include <generated/csr.h>
+-#include <generated/soc.h>
+-#include <generated/mem.h>
+-#include <generated/git.h>
+-
+-#include <libbase/console.h>
+-#include <libbase/crc.h>
+-#include <libbase/memtest.h>
+-
+-#include <libbase/spiflash.h>
+-#include <libbase/uart.h>
+-#include <libbase/i2c.h>
+-
+-#include <liblitedram/sdram.h>
+-#include <liblitedram/utils.h>
+-
+-#include <libliteeth/udp.h>
+-#include <libliteeth/mdio.h>
+-
+-#include <liblitespi/spiflash.h>
+-
+-#include <liblitesdcard/sdcard.h>
+-#include <liblitesata/sata.h>
+-
+-#ifndef CONFIG_BIOS_NO_BOOT
+-static void boot_sequence(void)
+-{
+-#ifdef CSR_UART_BASE
+-	if (serialboot() == 0)
+-		return;
+-#endif
+-#ifdef FLASH_BOOT_ADDRESS
+-	flashboot();
+-#endif
+-#ifdef ROM_BOOT_ADDRESS
+-	romboot();
+-#endif
+-#if defined(CSR_SPISDCARD_BASE) || defined(CSR_SDCARD_CORE_BASE)
+-	sdcardboot();
+-#endif
+-#if defined(CSR_SATA_SECTOR2MEM_BASE)
+-	sataboot();
+-#endif
+-#ifdef CSR_ETHMAC_BASE
+-#ifdef CSR_ETHPHY_MODE_DETECTION_MODE_ADDR
+-	eth_mode();
+-#endif
+-	netboot(0, NULL);
+-#endif
+-	printf("No boot medium found\n");
+-}
+-#endif
+-
+-__attribute__((__used__)) int main(int i, char **c)
+-{
+-#ifndef BIOS_CONSOLE_DISABLE
+-	char buffer[CMD_LINE_BUFFER_SIZE];
+-	char *params[MAX_PARAM];
+-	char *command;
+-	struct command_struct *cmd;
+-	int nb_params;
+-#endif
+-	int sdr_ok;
+-
+-#ifdef CONFIG_CPU_HAS_INTERRUPT
+-	irq_setmask(0);
+-	irq_setie(1);
+-#endif
+-#ifdef CSR_UART_BASE
+-	uart_init();
+-#endif
+-
+-#ifdef CONFIG_HAS_I2C
+-	i2c_send_init_cmds();
+-#endif
+-
+-#ifndef CONFIG_BIOS_NO_PROMPT
+-	printf("\n");
+-	printf("\e[1m        __   _ __      _  __\e[0m\n");
+-	printf("\e[1m       / /  (_) /____ | |/_/\e[0m\n");
+-	printf("\e[1m      / /__/ / __/ -_)>  <\e[0m\n");
+-	printf("\e[1m     /____/_/\\__/\\__/_/|_|\e[0m\n");
+-	printf("\e[1m   Build your hardware, easily!\e[0m\n");
+-	printf("\n");
+-	printf(" (c) Copyright 2012-2023 Enjoy-Digital\n");
+-	printf(" (c) Copyright 2007-2015 M-Labs\n");
+-	printf("\n");
+-#ifndef CONFIG_BIOS_NO_BUILD_TIME
+-	printf(" BIOS built on "__DATE__" "__TIME__"\n");
+-#endif
+-#ifndef CONFIG_BIOS_NO_CRC
+-	crcbios();
+-#endif
+-	printf("\n");
+-	printf(" LiteX git sha1: "LITEX_GIT_SHA1"\n");
+-	printf("\n");
+-	printf("--=============== \e[1mSoC\e[0m ==================--\n");
+-	printf("\e[1mCPU\e[0m:\t\t%s @ %dMHz\n",
+-		CONFIG_CPU_HUMAN_NAME,
+-		CONFIG_CLOCK_FREQUENCY/1000000);
+-	printf("\e[1mBUS\e[0m:\t\t%s %d-bit @ %dGiB\n",
+-		CONFIG_BUS_STANDARD,
+-		CONFIG_BUS_DATA_WIDTH,
+-		(1 << (CONFIG_BUS_ADDRESS_WIDTH - 30)));
+-	printf("\e[1mCSR\e[0m:\t\t%d-bit data\n",
+-		CONFIG_CSR_DATA_WIDTH);
+-	printf("\e[1mROM\e[0m:\t\t");
+-	print_size(ROM_SIZE);
+-	printf("\n");
+-	printf("\e[1mSRAM\e[0m:\t\t");
+-	print_size(SRAM_SIZE);
+-	printf("\n");
+-#ifdef CONFIG_L2_SIZE
+-	printf("\e[1mL2\e[0m:\t\t");
+-	print_size(CONFIG_L2_SIZE);
+-	printf("\n");
+-#endif
+-#ifdef CSR_SPIFLASH_CORE_BASE
+-	printf("\e[1mFLASH\e[0m:\t\t");
+-	print_size(SPIFLASH_MODULE_TOTAL_SIZE);
+-	printf("\n");
+-#endif
+-#ifdef MAIN_RAM_SIZE
+-#ifdef CSR_SDRAM_BASE
+-	uint64_t supported_memory = sdram_get_supported_memory();
+-	printf("\e[1mSDRAM\e[0m:\t\t");
+-	print_size(supported_memory);
+-	printf(" %d-bit @ %dMT/s ",
+-		sdram_get_databits(),
+-		sdram_get_freq()/1000000);
+-	printf("(CL-%d",
+-		sdram_get_cl());
+-	if (sdram_get_cwl() != -1)
+-		printf(" CWL-%d", sdram_get_cwl());
+-	printf(")\n");
+-#endif
+-	printf("\e[1mMAIN-RAM\e[0m:\t");
+-	print_size(MAIN_RAM_SIZE);
+-	printf("\n");
+-#endif
+-	printf("\n");
+-#endif
+-
+-        sdr_ok = 1;
+-
+-#if defined(CSR_ETHMAC_BASE) || defined(MAIN_RAM_BASE) || defined(CSR_SPIFLASH_CORE_BASE)
+-    printf("--========== \e[1mInitialization\e[0m ============--\n");
+-#ifdef CSR_ETHMAC_BASE
+-	eth_init();
+-#endif
+-
+-	/* Initialize and test DRAM */
+-#ifdef CSR_SDRAM_BASE
+-	sdr_ok = sdram_init();
+-#else
+-	/* Test Main RAM when present and not pre-initialized */
+-#ifdef MAIN_RAM_BASE
+-#ifndef CONFIG_MAIN_RAM_INIT
+-	sdr_ok = memtest((unsigned int *) MAIN_RAM_BASE, min(MAIN_RAM_SIZE, MEMTEST_DATA_SIZE));
+-	memspeed((unsigned int *) MAIN_RAM_BASE, min(MAIN_RAM_SIZE, MEMTEST_DATA_SIZE), false, 0);
+-#endif
+-#endif
+-#endif
+-	if (sdr_ok != 1)
+-		printf("Memory initialization failed\n");
+-#endif
+-
+-	/* Initialize and test SPIFLASH */
+-#ifdef CSR_SPIFLASH_CORE_BASE
+-	spiflash_init();
+-#endif
+-	printf("\n");
+-
+-	// Blank the framebuffer
+-	// Only need half of the pixels, as each word has two pixels
+-	for (int i = 0; i < MAX_DISPLAY_WIDTH * MAX_DISPLAY_HEIGHT / 2; i++) {
+-		int* address = VIDEO_FRAMEBUFFER_BASE + i * 4;
+-
+-		*address = 0x00000000;
+-	}
+-
+-	/* Initialize Video Framebuffer FIXME: Move */
+-#ifdef CSR_VIDEO_FRAMEBUFFER_BASE
+-	video_framebuffer_vtg_enable_write(0);
+-	video_framebuffer_dma_enable_write(0);
+-	video_framebuffer_vtg_enable_write(1);
+-	video_framebuffer_dma_enable_write(1);
+-#endif
+-
+-	/* Execute  initialization functions */
+-	init_dispatcher();
+-
+-	/* Execute Boot sequence */
+-#ifndef CONFIG_BIOS_NO_BOOT
+-	if(sdr_ok) {
+-		printf("--============== \e[1mBoot\e[0m ==================--\n");
+-		boot_sequence();
+-		printf("\n");
+-	}
+-#endif
+-
+-	/* Console */
+-#ifdef BIOS_CONSOLE_DISABLE
+-	printf("--======= \e[1mDone (No Console) \e[0m ==========--\n");
+-#else
+-	printf("--============= \e[1mConsole\e[0m ================--\n");
+-#if !defined(BIOS_CONSOLE_LITE) && !defined(BIOS_CONSOLE_NO_HISTORY)
+-	hist_init();
+-#endif
+-	printf("\n%s", PROMPT);
+-	while(1) {
+-		readline(buffer, CMD_LINE_BUFFER_SIZE);
+-		if (buffer[0] != 0) {
+-			printf("\n");
+-			nb_params = get_param(buffer, &command, params);
+-			cmd = command_dispatcher(command, nb_params, params);
+-			if (!cmd)
+-				printf("Command not found");
+-		}
+-		printf("\n%s", PROMPT);
+-	}
+-#endif
+-	return 0;
+-}
++// This file is Copyright (c) 2013-2014 Sebastien Bourdeauducq <sb@m-labs.hk>
++// This file is Copyright (c) 2014-2019 Florent Kermarrec <florent@enjoy-digital.fr>
++// This file is Copyright (c) 2015 Yann Sionneau <ys@m-labs.hk>
++// This file is Copyright (c) 2015 whitequark <whitequark@whitequark.org>
++// This file is Copyright (c) 2019 Ambroz Bizjak <ambrop7@gmail.com>
++// This file is Copyright (c) 2019 Caleb Jamison <cbjamo@gmail.com>
++// This file is Copyright (c) 2018 Dolu1990 <charles.papon.90@gmail.com>
++// This file is Copyright (c) 2018 Felix Held <felix-github@felixheld.de>
++// This file is Copyright (c) 2019 Gabriel L. Somlo <gsomlo@gmail.com>
++// This file is Copyright (c) 2018 Jean-François Nguyen <jf@lambdaconcept.fr>
++// This file is Copyright (c) 2018 Sergiusz Bazanski <q3k@q3k.org>
++// This file is Copyright (c) 2016 Tim 'mithro' Ansell <mithro@mithis.com>
++// This file is Copyright (c) 2020 Franck Jullien <franck.jullien@gmail.com>
++// This file is Copyright (c) 2020 Antmicro <www.antmicro.com>
++
++// License: BSD
++
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <system.h>
++#include <irq.h>
++
++#include "boot.h"
++#include "readline.h"
++#include "helpers.h"
++#include "command.h"
++
++#include <generated/csr.h>
++#include <generated/soc.h>
++#include <generated/mem.h>
++#include <generated/git.h>
++
++#include <libbase/console.h>
++#include <libbase/crc.h>
++#include <libbase/memtest.h>
++
++#include <libbase/spiflash.h>
++#include <libbase/uart.h>
++#include <libbase/i2c.h>
++
++#include <liblitedram/sdram.h>
++#include <liblitedram/utils.h>
++
++#include <libliteeth/udp.h>
++#include <libliteeth/mdio.h>
++
++#include <liblitespi/spiflash.h>
++
++#include <liblitesdcard/sdcard.h>
++#include <liblitesata/sata.h>
++
++#ifndef CONFIG_BIOS_NO_BOOT
++static void boot_sequence(void)
++{
++#ifdef CSR_UART_BASE
++	if (serialboot() == 0)
++		return;
++#endif
++#ifdef FLASH_BOOT_ADDRESS
++	flashboot();
++#endif
++#ifdef ROM_BOOT_ADDRESS
++	romboot();
++#endif
++#if defined(CSR_SPISDCARD_BASE) || defined(CSR_SDCARD_CORE_BASE)
++	sdcardboot();
++#endif
++#if defined(CSR_SATA_SECTOR2MEM_BASE)
++	sataboot();
++#endif
++#ifdef CSR_ETHMAC_BASE
++#ifdef CSR_ETHPHY_MODE_DETECTION_MODE_ADDR
++	eth_mode();
++#endif
++	netboot(0, NULL);
++#endif
++	printf("No boot medium found\n");
++}
++#endif
++
++__attribute__((__used__)) int main(int i, char **c)
++{
++#ifndef BIOS_CONSOLE_DISABLE
++	char buffer[CMD_LINE_BUFFER_SIZE];
++	char *params[MAX_PARAM];
++	char *command;
++	struct command_struct *cmd;
++	int nb_params;
++#endif
++	int sdr_ok;
++
++#ifdef CONFIG_CPU_HAS_INTERRUPT
++	irq_setmask(0);
++	irq_setie(1);
++#endif
++#ifdef CSR_UART_BASE
++	uart_init();
++#endif
++#if defined(CSR_SDRAM_BASE) && defined(CSR_APF_BRIDGE_BOOT_READY_ADDR)
++	/* Analogue Pocket: the Pocket's data slot write requests wait (held
++	 * busy by core_top) until the SDRAM works, so initialise it before the
++	 * banner, without the memtest (it would write where the Pocket loads). */
++	sdr_ok = sdram_init();
++	if (sdr_ok == 1)
++		romboot_host_load();
++#endif
++
++#ifdef CONFIG_HAS_I2C
++	i2c_send_init_cmds();
++#endif
++
++#ifndef CONFIG_BIOS_NO_PROMPT
++	printf("\n");
++	printf("\e[1m        __   _ __      _  __\e[0m\n");
++	printf("\e[1m       / /  (_) /____ | |/_/\e[0m\n");
++	printf("\e[1m      / /__/ / __/ -_)>  <\e[0m\n");
++	printf("\e[1m     /____/_/\\__/\\__/_/|_|\e[0m\n");
++	printf("\e[1m   Build your hardware, easily!\e[0m\n");
++	printf("\n");
++	printf(" (c) Copyright 2012-2023 Enjoy-Digital\n");
++	printf(" (c) Copyright 2007-2015 M-Labs\n");
++	printf("\n");
++#ifndef CONFIG_BIOS_NO_BUILD_TIME
++	printf(" BIOS built on "__DATE__" "__TIME__"\n");
++#endif
++#ifndef CONFIG_BIOS_NO_CRC
++	crcbios();
++#endif
++	printf("\n");
++	printf(" LiteX git sha1: "LITEX_GIT_SHA1"\n");
++	printf("\n");
++	printf("--=============== \e[1mSoC\e[0m ==================--\n");
++	printf("\e[1mCPU\e[0m:\t\t%s @ %dMHz\n",
++		CONFIG_CPU_HUMAN_NAME,
++		CONFIG_CLOCK_FREQUENCY/1000000);
++	printf("\e[1mBUS\e[0m:\t\t%s %d-bit @ %dGiB\n",
++		CONFIG_BUS_STANDARD,
++		CONFIG_BUS_DATA_WIDTH,
++		(1 << (CONFIG_BUS_ADDRESS_WIDTH - 30)));
++	printf("\e[1mCSR\e[0m:\t\t%d-bit data\n",
++		CONFIG_CSR_DATA_WIDTH);
++	printf("\e[1mROM\e[0m:\t\t");
++	print_size(ROM_SIZE);
++	printf("\n");
++	printf("\e[1mSRAM\e[0m:\t\t");
++	print_size(SRAM_SIZE);
++	printf("\n");
++#ifdef CONFIG_L2_SIZE
++	printf("\e[1mL2\e[0m:\t\t");
++	print_size(CONFIG_L2_SIZE);
++	printf("\n");
++#endif
++#ifdef CSR_SPIFLASH_CORE_BASE
++	printf("\e[1mFLASH\e[0m:\t\t");
++	print_size(SPIFLASH_MODULE_TOTAL_SIZE);
++	printf("\n");
++#endif
++#ifdef MAIN_RAM_SIZE
++#ifdef CSR_SDRAM_BASE
++	uint64_t supported_memory = sdram_get_supported_memory();
++	printf("\e[1mSDRAM\e[0m:\t\t");
++	print_size(supported_memory);
++	printf(" %d-bit @ %dMT/s ",
++		sdram_get_databits(),
++		sdram_get_freq()/1000000);
++	printf("(CL-%d",
++		sdram_get_cl());
++	if (sdram_get_cwl() != -1)
++		printf(" CWL-%d", sdram_get_cwl());
++	printf(")\n");
++#endif
++	printf("\e[1mMAIN-RAM\e[0m:\t");
++	print_size(MAIN_RAM_SIZE);
++	printf("\n");
++#endif
++	printf("\n");
++#endif
++
++#ifndef CSR_APF_BRIDGE_BOOT_READY_ADDR
++        sdr_ok = 1;
++#endif
++
++#if defined(CSR_ETHMAC_BASE) || defined(MAIN_RAM_BASE) || defined(CSR_SPIFLASH_CORE_BASE)
++    printf("--========== \e[1mInitialization\e[0m ============--\n");
++#ifdef CSR_ETHMAC_BASE
++	eth_init();
++#endif
++
++	/* Initialize and test DRAM */
++#ifdef CSR_SDRAM_BASE
++#ifndef CSR_APF_BRIDGE_BOOT_READY_ADDR
++	sdr_ok = sdram_init();
++#endif
++#else
++	/* Test Main RAM when present and not pre-initialized */
++#ifdef MAIN_RAM_BASE
++#ifndef CONFIG_MAIN_RAM_INIT
++	sdr_ok = memtest((unsigned int *) MAIN_RAM_BASE, min(MAIN_RAM_SIZE, MEMTEST_DATA_SIZE));
++	memspeed((unsigned int *) MAIN_RAM_BASE, min(MAIN_RAM_SIZE, MEMTEST_DATA_SIZE), false, 0);
++#endif
++#endif
++#endif
++	if (sdr_ok != 1)
++		printf("Memory initialization failed\n");
++#endif
++#ifdef ROM_BOOT_ADDRESS
++	if (sdr_ok == 1) {
++		romboot_screen();   /* black, before the serial-boot wait */
++	}
++#endif
++
++	/* Initialize and test SPIFLASH */
++#ifdef CSR_SPIFLASH_CORE_BASE
++	spiflash_init();
++#endif
++	printf("\n");
++
++	// Blank the framebuffer
++	// Only need half of the pixels, as each word has two pixels
++	for (int i = 0; i < MAX_DISPLAY_WIDTH * MAX_DISPLAY_HEIGHT / 2; i++) {
++		int* address = (int*)(VIDEO_FRAMEBUFFER_BASE + i * 4);
++
++		*address = 0x00000000;
++	}
++
++	/* Initialize Video Framebuffer FIXME: Move */
++#ifdef CSR_VIDEO_FRAMEBUFFER_BASE
++	video_framebuffer_vtg_enable_write(0);
++	video_framebuffer_dma_enable_write(0);
++	video_framebuffer_vtg_enable_write(1);
++	video_framebuffer_dma_enable_write(1);
++#endif
++
++	/* Execute  initialization functions */
++	init_dispatcher();
++
++	/* Execute Boot sequence */
++#ifndef CONFIG_BIOS_NO_BOOT
++	if(sdr_ok) {
++		printf("--============== \e[1mBoot\e[0m ==================--\n");
++		boot_sequence();
++		printf("\n");
++	}
++#endif
++
++	/* Console */
++#ifdef BIOS_CONSOLE_DISABLE
++	printf("--======= \e[1mDone (No Console) \e[0m ==========--\n");
++#else
++	printf("--============= \e[1mConsole\e[0m ================--\n");
++#if !defined(BIOS_CONSOLE_LITE) && !defined(BIOS_CONSOLE_NO_HISTORY)
++	hist_init();
++#endif
++	printf("\n%s", PROMPT);
++	while(1) {
++		readline(buffer, CMD_LINE_BUFFER_SIZE);
++		if (buffer[0] != 0) {
++			printf("\n");
++			nb_params = get_param(buffer, &command, params);
++			cmd = command_dispatcher(command, nb_params, params);
++			if (!cmd)
++				printf("Command not found");
++		}
++		printf("\n%s", PROMPT);
++	}
++#endif
++	return 0;
++}
+diff --git a/litex/soc/software/libbase/uart.c b/litex/soc/software/libbase/uart.c
+index 20a4dc27..cf921450 100644
+--- a/litex/soc/software/libbase/uart.c
++++ b/litex/soc/software/libbase/uart.c
+@@ -12,6 +12,8 @@
+ 
+ //#define UART_POLLING
+ 
++#define UART_TX_STALL_SPINS 4000000u   /* ~0.5 s: the JTAG relay moves ~24 bytes per round trip */
++
+ #ifndef UART_POLLING
+ 
+ #define UART_RINGBUFFER_SIZE_RX 128
+@@ -84,7 +86,18 @@ void uart_write(char c)
+ 	unsigned int tx_produce_next = (tx_produce + 1) & UART_RINGBUFFER_MASK_TX;
+ 
+ 	if(irq_getie()) {
+-		while(tx_produce_next == tx_consume);
++		/* Analogue Pocket: with the JTAG UART selected and no host reading
++		 * it, the ring never drains -- the BIOS hung in its banner before
++		 * DRAM init. Wait a bounded time for room, then drop output until
++		 * the ring drains again. */
++		static int tx_stalled;
++		if(tx_produce_next == tx_consume && !tx_stalled) {
++			for(unsigned int i = 0; i < UART_TX_STALL_SPINS && tx_produce_next == tx_consume; i++);
++			tx_stalled = tx_produce_next == tx_consume;
++		}
++		if(tx_produce_next == tx_consume)
++			return;
++		tx_stalled = 0;
+ 	} else if(tx_produce_next == tx_consume) {
+ 		return;
+ 	}
+@@ -117,7 +130,8 @@ void uart_init(void)
+ 
+ void uart_sync(void)
+ {
+-	while(tx_consume != tx_produce);
++	/* bounded, like uart_write(): nobody may be reading the JTAG UART */
++	for(unsigned int i = 0; i < UART_TX_STALL_SPINS && tx_consume != tx_produce; i++);
+ }
+ 
+ #else
+@@ -142,7 +156,22 @@ int uart_read_nonblock(void)
+ 
+ void uart_write(char c)
+ {
+-	while (uart_txfull_read());
++	/* Analogue Pocket: the UART is JTAG-only (analogue_pocket.py), and with
++	 * no host reading it txfull never clears -- the BIOS (UART_POLLING) hung
++	 * in its first printf and the Pocket failed the launch ("RS: Host
++	 * commands ignored", "RW: Target not responding"). Wait a bounded time,
++	 * then drop output until there is room again. */
++	static int tx_stalled;
++	if (uart_txfull_read()) {
++		if (tx_stalled)
++			return;
++		for (unsigned int i = 0; i < UART_TX_STALL_SPINS && uart_txfull_read(); i++);
++		if (uart_txfull_read()) {
++			tx_stalled = 1;
++			return;
++		}
++	}
++	tx_stalled = 0;
+ 	uart_rxtx_write(c);
+ 	uart_ev_pending_write(UART_EV_TX);
+ }
+@@ -155,7 +184,7 @@ void uart_init(void)
+ 
+ void uart_sync(void)
+ {
+-	while (uart_txfull_read());
++	for (unsigned int i = 0; i < UART_TX_STALL_SPINS && uart_txfull_read(); i++);
+ }
+ 
+ #endif
+diff --git a/litex/soc/software/liblitedram/sdram.c b/litex/soc/software/liblitedram/sdram.c
+index a5898197..ca8453e4 100644
+--- a/litex/soc/software/liblitedram/sdram.c
++++ b/litex/soc/software/liblitedram/sdram.c
+@@ -27,7 +27,9 @@
+ #include <liblitedram/sdram_dbg.h>
+ #include <liblitedram/accessors.h>
+ 
+-//#define SDRAM_TEST_DISABLE
++/* Analogue Pocket (Mirlo): no memtest -- the BIOS initialises the SDRAM
++ * while the Pocket may already be loading the game into it. */
++#define SDRAM_TEST_DISABLE
+ //#define SDRAM_WRITE_LEVELING_CMD_DELAY_DEBUG
+ //#define SDRAM_WRITE_LATENCY_CALIBRATION_DEBUG
+ //#define SDRAM_LEVELING_SCAN_DISPLAY_HEX_DIV 10
+diff --git a/litex/tools/litex_term.py b/litex/tools/litex_term.py
+index 66e3fa50..27df7e5d 100755
+--- a/litex/tools/litex_term.py
++++ b/litex/tools/litex_term.py
+@@ -322,6 +322,12 @@ class LiteXTerm:
+         if hasattr(self, "port"):
+             return
+         self.port = serial.serial_for_url(port, baudrate)
++        # Slow JTAG-UART relay: short read timeout so the upload ack-poll loop
++        # stays responsive instead of blocking a full second per read.
++        try:
++            self.port.timeout = 0.1
++        except Exception:
++            pass
+ 
+     def close(self):
+         if not hasattr(self, "port"):
+@@ -342,29 +348,25 @@ class LiteXTerm:
+             self.sigint_time_last = sigint_time_current
+ 
+     def send_frame(self, frame):
+-        retry = 1
+-        while retry:
++        # Retry on any non-ACK (CRC error, framing error 'E', loss/timeout) --
++        # tolerates the lossy JTAG-UART relay instead of aborting.
++        for _ in range(8000):
+             self.port.write(frame.encode())
+-            # Get the reply from the device
+-            reply = self.port.read()
+-            if reply == sfl_ack_success:
+-                retry = 0
+-            elif reply == sfl_ack_crcerror:
+-                retry = 1
+-            else:
+-                print("[LITEX-TERM] Got unknown reply '{}' from the device, aborting.".format(reply))
+-                return 0
+-        return 1
++            if self.port.read() == sfl_ack_success:
++                return 1
++        print("[LITEX-TERM] send_frame retransmit limit hit, aborting.")
++        return 0
+ 
+     def receive_upload_response(self):
++        # "ok"   -> device ACKed the frame (K)
++        # "nak"  -> device rejected it (C/E/U): resend now
++        # "none" -> nothing yet: caller keeps polling until its deadline
+         reply = self.port.read()
+         if reply == sfl_ack_success:
+-            return True
+-        elif reply == sfl_ack_crcerror:
+-            print("[LITEX-TERM] Upload to device failed due to data corruption (CRC error)")
+-        else:
+-            print(f"[LITEX-TERM] Got unexpected response from device '{reply}'")
+-        sys.exit(1)
++            return "ok"
++        if reply in (sfl_ack_crcerror, sfl_ack_unknown):
++            return "nak"
++        return "none"  # b'' timeout, or stray byte -> keep polling to the deadline
+ 
+     def upload_calibration(self, address):
+ 
+@@ -438,65 +440,79 @@ class LiteXTerm:
+ 
+         print(f"[LITEX-TERM] Uploading {filename} to 0x{address:08x} ({length} bytes)...")
+ 
+-        # Upload calibration
+-        if not self.safe:
+-            self.upload_calibration(address)
+-            # Force safe mode settings when calibration fails.
+-            if self.delay is None:
+-                self.delay       = 0
+-                self.length      = 64
+-                self.outstanding = 0
++        # Robust one-frame-at-a-time upload with per-frame retransmission --
++        # tolerates a lossy transport (openocd JTAG-UART jtagstream relay), where
++        # the stock pipelined uploader aborts on the first corrupted frame/ack.
++        # Skips calibration (it hangs on a lossy link). SFL loads are idempotent,
++        # so resending a frame the device already wrote is harmless.
++        frame_len = 8   # SFL frames: the JTAG-UART relay only reliably
++                        # passes ~14-byte writes (the magic ack got through, 64B
++                        # data frames did not); keep each frame in that regime.
++                        # Reduced from 48 (wire size ~56B, needing 3 relay batch
++                        # RPCs per frame) after observing consistent stalls a
++                        # few frames into every upload attempt -- 8B payload
++                        # (wire size ~16B) fits within one relay batch (24B),
++                        # actually matching the "~14-byte" finding instead of
++                        # exceeding it.
++        inter     = self.delay if getattr(self, "delay", None) else 5e-4
+ 
+-        # Prepare parameters
+         current_address = address
+         position        = 0
+         start           = time.time()
+-        remaining       = length
+-        outstanding     = 0
+-        while remaining:
+-            # Show progress
++        f.seek(0, 0)
++
++        while position < length:
+             sys.stdout.write("|{}>{}| {}%\r".format(
+                 "=" * (20*position//length),
+                 " " * (20-20*position//length),
+                 100*position//length))
+             sys.stdout.flush()
+ 
+-            # Send frame if max outstanding not reached.
+-            if outstanding <= self.outstanding:
+-                # Prepare frame.
+-                frame      = SFLFrame()
+-                frame.cmd  = sfl_cmd_load
+-                frame_data = f.read(min(remaining, self.length-4))
+-                frame.payload = current_address.to_bytes(4, "big")
+-                frame.payload += frame_data
++            frame_data = f.read(min(length - position, frame_len))
++            frame      = SFLFrame()
++            frame.cmd  = sfl_cmd_load
++            frame.payload = current_address.to_bytes(4, "big") + frame_data
+ 
+-                # Encode frame and send it.
++            tries = 0
++            while True:
+                 self.port.write(frame.encode())
+-
+-                # Update parameters
+-                current_address += len(frame_data)
+-                position        += len(frame_data)
+-                remaining       -= len(frame_data)
+-                outstanding     += 1
+-
+-                # Inter-frame delay.
+-                time.sleep(self.delay)
+-
+-            # Read response if available.
+-            while self.port.in_waiting:
+-                ack = self.receive_upload_response()
+-                if ack:
+-                    outstanding -= 1
++                # Wait out the frame's flight time on the slow JTAG-UART relay
++                # (~a few KB/s each way) before expecting the device's K/C ack,
++                # so we don't spuriously resend and flood the transport. Widened
++                # from 1.5s: under load the relay's batched drscan round-trips
++                # can take longer than that to drain even one frame, and since
++                # every retry unconditionally re-writes the full frame (see
++                # below), a too-short deadline causes an unbounded backlog
++                # (each premature retry adds another copy on top of one still
++                # in flight) rather than a clean resend.
++                deadline = time.time() + 5.0
++                resp = "resend"
++                while time.time() < deadline:
++                    r = self.receive_upload_response()
++                    if r == "ok":
++                        resp = "ok"
++                        break
++                    if r == "nak":
++                        break
++                    time.sleep(0.02)
++                if resp == "ok":
+                     break
+-
+-        # Get remaining responses.
+-        for _ in range(outstanding):
+-            self.receive_upload_response()
+-
+-        # Compute speed.
+-        end     = time.time()
+-        elapsed = end - start
+-        print("[LITEX-TERM] Upload complete ({0:.1f}KB/s).".format(length/(elapsed*1024)))
++                tries += 1
++                if tries % 20 == 0:
++                    sys.stdout.write("\n[LITEX-TERM] frame @0x{:08x}: {} retries\n".format(
++                        current_address, tries))
++                    sys.stdout.flush()
++                if tries > 120:
++                    print("\n[LITEX-TERM] frame retransmit limit hit, aborting.")
++                    sys.exit(1)
++
++            current_address += len(frame_data)
++            position        += len(frame_data)
++
++        end = time.time()
++        print("|{}>| 100%".format("=" * 20))
++        print("[LITEX-TERM] Upload complete ({0:.1f}KB/s).".format(
++            length/((end - start)*1024 + 1e-9)))
+         f.close()
+         return length
+ 

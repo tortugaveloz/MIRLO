@@ -1,0 +1,96 @@
+# C/C++ build output
+*.o
+*.d
+*.i
+*.s
+*.so
+*.elf
+*.elf.map
+*.bin
+*.hex
+**/build/
+!/litex/build/
+
+# Game files, bitstreams
+*.rbf
+*.rbf_r
+*.rev
+*.sof
+*.pof
+
+# The core package's images are .bin too
+!/pkg/pocket/Cores/*/icon.bin
+!/pkg/pocket/Platforms/_images/*.bin
+
+# LiteX build output: only the generated headers and linker files are kept
+/litex/build/*
+!/litex/build/litex/
+/litex/build/litex/*
+!/litex/build/litex/gateware/
+/litex/build/litex/gateware/*
+!/litex/build/litex/gateware/litex.v
+!/litex/build/litex/gateware/litex.sdc
+!/litex/build/litex/gateware/*.init
+!/litex/build/litex/software/
+/litex/build/litex/software/*
+!/litex/build/litex/software/include/
+/litex/build/litex/software/include/*
+!/litex/build/litex/software/include/generated/
+
+# Verilator / simulation output
+obj_dir/
+obj_*/
+/sim/geom_full/work/
+
+# Rust
+lang/rust/**/target
+lang/rust/output.txt
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Quartus directories and files
+db/
+incremental_db/
+output_files/
+greybox_tmp
+hps_isw_handoff
+PLLJ_PLLSPE_INFO.txt
+simulation
+vip
+.qsys_edit
+*_netlist
+*.bak
+*.bsf
+*.cmp
+*.done
+*.pin
+*.ptf.*
+*.qar
+*.qarlog
+*.qdf
+*.qws
+*.rpt
+*.sip
+*.sld
+*.smsg
+*.sopc_builder
+*.sopcinfo
+*.spd
+*.summary
+*.qmsg
+build_id.mif
+build_id.v
+c5_pin_model_dump.txt
+cr_ie_info.json
+projects_*/
+
+# Editors and OS
+.idea
+.vscode
+*.suo
+*.sw?
+*~
+**/.DS_Store

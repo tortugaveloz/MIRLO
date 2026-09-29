@@ -1,0 +1,5 @@
+# The geometry core's CFU: the fixed-point parallel VPU and its
+# triangle-setup unit (GeomSetupUnit: BLEND/RECIPN/FXMUL/DIVN).
+set_global_assignment -name SEARCH_PATH  [file join $::quartus(qip_path) "."]
+set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) "Vpu4DFixed.v"]
+set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) "GeomSetupUnit.v"]

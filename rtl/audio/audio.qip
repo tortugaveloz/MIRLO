@@ -1,0 +1,5 @@
+# Audio core: VexRiscvAudio (rv32i + Zmmul, no FPU/divider/caches, generated
+# by ext/VexRiscv GenCoreAudio) inside AudioCore.v (IMEM/DMEM/CTRL + buses).
+set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) "VexRiscvAudio.v"]
+set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) "AudioCore.v"]
+set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) "AudioDspCfu.v"]
