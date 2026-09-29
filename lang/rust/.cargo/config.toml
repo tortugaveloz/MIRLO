@@ -16,5 +16,5 @@ target = "riscv32imafc-unknown-none-elf.json"
 
 [env]
 # Ensure CC builds properly for platform
-CC_riscv32imafc_unknown_none_elf = "riscv64-unknown-elf-gcc"
+CC_riscv32imafc_unknown_none_elf = "riscv-none-elf-gcc"
 CFLAGS_riscv32imafc_unknown_none_elf = "-mabi=ilp32f -march=rv32imafc"
