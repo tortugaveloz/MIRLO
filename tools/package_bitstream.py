@@ -11,7 +11,8 @@ Usage: package_bitstream.py <in.rbf> <out.rev> [<archive_dir> <tag>]
 
 If an archive dir and tag are given, a copy is kept there as
 `riscv-<tag>.rev` so a 20-minute build can be A/B tested later without
-recompiling. Bitstreams are local-only and are never committed or pushed.
+recompiling. Bitstreams are not committed to the repository: releases carry
+them (tools/make_release.py).
 """
 import hashlib
 import os
