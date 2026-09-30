@@ -23,6 +23,7 @@ apply() {   # apply <dir> <patch>
 P="$PWD/litex/vendor/patches"
 apply litex/vendor/litex "$P/litex.patch"
 apply litex/vendor/litedram "$P/litedram.patch"
+apply litex/vendor/migen "$P/migen.patch"
 apply litex/vendor/pythondata-cpu-vexriscv_smp/pythondata_cpu_vexriscv_smp/verilog/ext/VexRiscv "$P/VexRiscv.patch"
 
 N=VexRiscvLitexSmpCluster_Cc1_Iw32Is16384Iy4_Dw32Ds8192Dy2_ITs4DTs4_Ldw32_Ood_Fpu4_Rvc_Nmmu_Nsv_Na_Ndbg.v
