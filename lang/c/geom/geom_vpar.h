@@ -80,7 +80,7 @@ static inline float geom_vpar_from_fixed(int32_t x) {
     return c.f;
 }
 
-#if defined(__riscv) && !defined(GEOM_HOST_TEST)
+#if (defined(__riscv) || defined(__mips__)) && !defined(GEOM_HOST_TEST)
 
 /* .insn r opcode, funct3, funct7, rd, rs1, rs2 -- custom-0 major opcode is
  * 0x0B (0001011), matching the CfuPluginEncoding instruction pattern
@@ -99,10 +99,16 @@ static inline float geom_vpar_from_fixed(int32_t x) {
  * CFU) nor the host model can see this; it was found by running the real
  * firmware on the real VexRiscvGeom + Vpu4DFixed RTL in sim/geom_full and
  * tracing the CFU bus, before this CFU had ever been booted on hardware. */
+#ifdef __mips__
+#include "mips_cfu.h"             /* the geom core on MIPS: fid = insn[9:0] */
+#define GEOM_VPAR_INSN(function_id, rd_expr, rs1_expr, rs2_expr) \
+    ((rd_expr) = MCFU(function_id, rs1_expr, rs2_expr))
+#else
 #define GEOM_VPAR_INSN(function_id, rd_expr, rs1_expr, rs2_expr) \
     __asm__ volatile(".insn r 0x0B, %3, %4, %0, %1, %2" \
         : "=r"(rd_expr) : "r"(rs1_expr), "r"(rs2_expr), \
           "i"(((function_id) >> 7) & 0x7), "i"((function_id) & 0x7F))
+#endif
 
 static inline void geom_vpar_load_m(int idx, int32_t raw) {
     uint32_t rd;

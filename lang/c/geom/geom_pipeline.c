@@ -7,6 +7,7 @@
 #include "geom_vecmath.h"
 #include "geom_math.h"
 #include "geom_gdl.h"
+#include "geom_dcache.h"
 #include "geom_triangle.h"
 #include "geom_pipeline.h"
 
@@ -1713,7 +1714,7 @@ void geom_run_display_list(const uint32_t *dl)
             for (int i_ = 0; i_ < PR_COUNT; i_++) s_diag[13 + i_] = s_prof[i_];
             for (int i_ = 0; i_ < GEOM_DIAG_N; i_++) geom_diag()[i_] = s_diag[i_];
 #endif
-            __asm__ volatile(".word 0x500F" ::: "memory");
+            geom_dcache_flush();
 #endif
             return;
 

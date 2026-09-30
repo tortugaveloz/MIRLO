@@ -529,8 +529,31 @@ def gen():
     o.append('// microcode (%d instructions of %d bits); registered address, one ROM block pair.' % (len(P), WIDTH))
     ports = ',\n'.join('    output wire [%d:0] u_%s' % (w - 1, n) for n, w in FIELDS)
     o.append('module mrdp_ucode_rom (\n    input  wire       clk,\n    input  wire [7:0] a,\n%s\n);' % ports)
+    # Quartus: an explicit M10K ROM (altsyncram, contents from the .mif next
+    # to this file, listed in rtl/mrdp.qip) -- inferred from the array below it
+    # came out as 236 ALMs of logic, and romstyle did not change that. The
+    # same registered read: the address clocked in, the word out that cycle.
+    # Everything else (Verilator, iverilog) reads the array -- and so does
+    # Quartus with MRDP_UCODE_LOGIC: the ROM in LUTs, the word out of a
+    # register rather than an M10K's slow output (the setup datapath's
+    # critical path starts there; ~236 ALMs, for builds that have them).
+    o.append('    wire [%d:0] q;' % (WIDTH - 1))
+    o.append('`ifdef ALTERA_RESERVED_QIS')
+    o.append('`ifndef MRDP_UCODE_LOGIC')
+    o.append('`define MRDP_UCODE_M10K')
+    o.append('`endif')
+    o.append('`endif')
+    o.append('`ifdef MRDP_UCODE_M10K')
+    o.append('    altsyncram #(.operation_mode("ROM"), .width_a(%d), .widthad_a(8), .numwords_a(256),' % WIDTH)
+    o.append('        .outdata_reg_a("UNREGISTERED"), .address_reg_a("CLOCK0"), .init_file("mrdp_ucode_rom.mif"),')
+    o.append('        .ram_block_type("M10K"), .intended_device_family("Cyclone V"), .lpm_type("altsyncram")')
+    o.append('    ) rom_m10k (.clock0(clk), .address_a(a), .q_a(q), .aclr0(1\'b0), .aclr1(1\'b0), .addressstall_a(1\'b0),')
+    o.append('        .addressstall_b(1\'b0), .address_b(1\'b1), .byteena_a(1\'b1), .byteena_b(1\'b1), .clock1(1\'b1),')
+    o.append('        .clocken0(1\'b1), .clocken1(1\'b1), .clocken2(1\'b1), .clocken3(1\'b1), .data_a({%d{1\'b1}}),' % WIDTH)
+    o.append('        .data_b(1\'b1), .eccstatus(), .q_b(), .rden_a(1\'b1), .rden_b(1\'b1), .wren_a(1\'b0), .wren_b(1\'b0));')
+    o.append('`else')
     o.append('    reg [%d:0] rom [0:255];' % (WIDTH - 1))
-    o.append('    reg [%d:0] q;' % (WIDTH - 1))
+    o.append('    reg [%d:0] q_r;' % (WIDTH - 1))
     o.append('    integer i;')
     o.append('    initial begin')
     o.append("        for (i = 0; i < 256; i = i + 1) rom[i] = %d'h%x;" % (WIDTH, fill))
@@ -538,7 +561,13 @@ def gen():
         tag = ','.join(k for k, x in L.items() if x == i)
         o.append("        rom[%d] = %d'h%019x;%s" % (i, WIDTH, v, ('   // ' + tag) if tag else ''))
     o.append('    end')
-    o.append('    always @(posedge clk) q <= rom[a];')
+    o.append('    always @(posedge clk) q_r <= rom[a];')
+    o.append('    assign q = q_r;')
+    o.append('`endif')
+    mif = ['WIDTH=%d;' % WIDTH, 'DEPTH=256;', 'ADDRESS_RADIX=HEX;', 'DATA_RADIX=HEX;', 'CONTENT BEGIN']
+    mif += ['    %02X : %019X;' % (i, words[i] if i < len(words) else fill) for i in range(256)]
+    mif += ['END;']
+    open(os.path.join(ROOT, 'rtl/mrdp/mrdp_ucode_rom.mif'), 'w').write('\n'.join(mif) + '\n')
     sh = 0
     for n, w in FIELDS:
         o.append('    assign u_%s = q[%d:%d];' % (n, sh + w - 1, sh))

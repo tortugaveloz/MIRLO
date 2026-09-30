@@ -937,7 +937,12 @@ module core_top (
     end
   end
 
+`ifdef MIRLO_MIPS
+  // MIRLO on MIPS, without LiteX: its own SoC (rtl/soc/mirlo_mips.sv), the same ports
+  mirlo_mips litex (
+`else
   litex litex (
+`endif
       .clk_sys(clk_sys),
       .clk_sys2x(clk_mem),
       .clk_sys2x_90deg(clk_mem_180deg),

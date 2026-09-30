@@ -7,6 +7,7 @@
 #include <generated/mem.h>
 
 #include "log.h"
+#include "trap_arch.h"
 
 unsigned long log_dropped;
 
@@ -63,48 +64,31 @@ void log_pump(void)
  * what trapped where, then halts; the log already queued is flushed first so
  * the report lands after it. Interrupts are not used by this firmware (UART
  * polling), so a stray one is masked and resumed. */
-static inline uint32_t rd_mcause(void) { uint32_t v; __asm__ volatile("csrr %0, mcause" : "=r"(v)); return v; }
-static inline uint32_t rd_mepc(void)   { uint32_t v; __asm__ volatile("csrr %0, mepc"   : "=r"(v)); return v; }
-static inline uint32_t rd_mtval(void)  { uint32_t v; __asm__ volatile("csrr %0, mtval"  : "=r"(v)); return v; }
+#define rd_mcause trap_cause
+#define rd_mepc   trap_epc
+#define rd_mtval  trap_tval
 
 /* ---- stall watchdog (see log.h) ---- */
-#define CLINT_REG(off) (*(volatile uint32_t *)(uintptr_t)(CLINT_BASE + (off)))
-#define MTIMECMP_LO CLINT_REG(0x4000)
-#define MTIMECMP_HI CLINT_REG(0x4004)
-#define MTIME_LO    CLINT_REG(0xBFF8)
-#define MTIME_HI    CLINT_REG(0xBFFC)
-
 volatile char     wd_marks[64];
 volatile unsigned wd_mark_pos;
 static unsigned long s_wd_cycles;
 
-static uint64_t mtime(void)
-{
-    uint32_t hi, lo;
-    do { hi = MTIME_HI; lo = MTIME_LO; } while (hi != MTIME_HI);
-    return ((uint64_t)hi << 32) | lo;
-}
-
 void watchdog_kick(void)
 {
     if (!s_wd_cycles) return;
-    uint64_t t = mtime() + s_wd_cycles;
-    MTIMECMP_HI = 0xFFFFFFFFu;              /* no spurious match mid-update */
-    MTIMECMP_LO = (uint32_t)t;
-    MTIMECMP_HI = (uint32_t)(t >> 32);
+    timer_irq_arm(s_wd_cycles);
 }
 
 void watchdog_start(unsigned long cycles)
 {
     s_wd_cycles = cycles;
     watchdog_kick();
-    __asm__ volatile("csrs mie, %0" :: "r"(1u << 7));       /* MTIE */
-    __asm__ volatile("csrs mstatus, %0" :: "r"(1u << 3));   /* MIE */
+    timer_irq_enable();
 }
 
 void watchdog_stop(void)
 {
-    __asm__ volatile("csrc mie, %0" :: "r"(1u << 7));
+    timer_irq_disable();
     s_wd_cycles = 0;
 }
 
@@ -116,13 +100,7 @@ static uint16_t s_prof_hist[PROF_BUCKETS];
 static uint32_t s_prof_samples, s_prof_outside;
 static unsigned long s_prof_period;
 
-static void prof_arm(void)
-{
-    uint64_t t = mtime() + s_prof_period;
-    MTIMECMP_HI = 0xFFFFFFFFu;
-    MTIMECMP_LO = (uint32_t)t;
-    MTIMECMP_HI = (uint32_t)(t >> 32);
-}
+static void prof_arm(void) { timer_irq_arm(s_prof_period); }
 
 void prof_start(unsigned long period)
 {
@@ -130,13 +108,12 @@ void prof_start(unsigned long period)
     s_prof_samples = s_prof_outside = 0;
     s_prof_period = period;
     prof_arm();
-    __asm__ volatile("csrs mie, %0" :: "r"(1u << 7));       /* MTIE */
-    __asm__ volatile("csrs mstatus, %0" :: "r"(1u << 3));   /* MIE */
+    timer_irq_enable();
 }
 
 void prof_stop(void)
 {
-    __asm__ volatile("csrc mie, %0" :: "r"(1u << 7));
+    timer_irq_disable();
     s_prof_period = 0;
 }
 
@@ -202,11 +179,11 @@ void prof_dump_log(unsigned topn)
  * hook may run float code. */
 void (*volatile g_mtimer_hook)(void);
 
-__attribute__((interrupt("machine"), aligned(4)))
+TRAP_HANDLER_ATTR
 void trap_handler(void)
 {
     uint32_t cause = rd_mcause();
-    if (cause == 0x80000007u && g_mtimer_hook) {
+    if (trap_is_timer(cause) && g_mtimer_hook) {
         if (s_prof_passive) prof_sample(rd_mepc());
 #ifdef DBG_STALL_TICK
         /* DBG_STALL_TICK: the periodic tick doubles as a stall detector --
@@ -235,7 +212,7 @@ void trap_handler(void)
         g_mtimer_hook();
         return;
     }
-    if (cause == 0x80000007u && s_prof_period) {  /* machine timer: a profiler sample */
+    if (trap_is_timer(cause) && s_prof_period) {  /* machine timer: a profiler sample */
         uint32_t off = rd_mepc() - PROF_BASE;
         if (off < (PROF_BUCKETS << PROF_SHIFT)) {
             uint32_t i = off >> PROF_SHIFT;
@@ -247,9 +224,9 @@ void trap_handler(void)
         prof_arm();
         return;
     }
-    if (cause == 0x80000007u) {                 /* machine timer: the watchdog */
+    if (trap_is_timer(cause)) {                 /* machine timer: the watchdog */
         uint32_t epc = rd_mepc();
-        __asm__ volatile("csrc mie, %0" :: "r"(1u << 7));
+        timer_irq_disable();
         while (s_tail != s_head) log_pump();
         char m[65];
         unsigned end = wd_mark_pos;
@@ -266,8 +243,8 @@ void trap_handler(void)
                (unsigned long)mrdp_cmd_dropped_read(), (unsigned long)mailbox_status_read());
         for (;;) { }
     }
-    if (cause & 0x80000000u) {
-        __asm__ volatile("csrc mstatus, %0" :: "r"(1u << 7));   /* MPIE: stay masked */
+    if (trap_is_irq(cause)) {
+        trap_mask_stray(cause);
         return;
     }
     uint32_t epc = rd_mepc(), tval = rd_mtval();

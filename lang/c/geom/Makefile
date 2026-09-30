@@ -19,13 +19,37 @@
 # own Scala generator (GenCoreGeomFpuCfu.scala) and rtl/geom/VexRiscvGeom.v
 # snapshot live at that tag if the fixed-point rewrite ever needs reverting.
 
+# The CPU: riscv (VexRiscvGeom, the LiteX SoC) or mips (rtl/mips/mips_geom.sv,
+# the MIPS SoC -- rtl/soc/mirlo_mips.sv). Same C; the CFU instructions per
+# geom_vpar.h / geom_fixed.h, the D-cache flush per geom_dcache.h. The MIPS
+# core has a divider and clz, no FPU: soft-float from compiler-rt, in ROM A.
+CPU     ?= riscv
+ifeq ($(CPU),mips)
+B        = build/mips
+include ../../mips/mips.mk
+CC        = $(MIPS_GCC)
+OBJCOPY   = $(MIPS_OBJCOPY)
+GEN_CSR   = ../../mips/include/generated/csr.h
+ARCHFLAGS = $(MIPS_LITE_CFLAGS) -I../mips -isystem ../../mips/build/lite/include
+LDSCRIPT  = geom_mips.ld
+START     = start_mips
+CFLAGS_EXTRA += -fno-strict-aliasing
+CRT_LIB   = ../../mips/build/lite/libcrt.a
+LINK      = $(MIPS_LD) -EL --gc-sections -Map=$(B)/geom.map -T $(LDSCRIPT)
+LINK_LIBS = $(CRT_LIB)
+else
+B        = build
 CROSS   ?= riscv-none-elf-
 CC       = $(CROSS)gcc
 OBJCOPY  = $(CROSS)objcopy
-
 GEN_CSR  = ../../../litex/build/litex/software/include/generated/csr.h
+ARCHFLAGS = -march=rv32i_zmmul_zicsr -mabi=ilp32 -mno-relax   # no divider in the geom CPU: multiply only (Zmmul)
+LDSCRIPT  = geom.ld
+START     = start
+LINK      = $(CC) $(ARCHFLAGS) -nostdlib -Wl,--gc-sections -Wl,-Map,$(B)/geom.map -T $(LDSCRIPT)
+LINK_LIBS =
+endif
 
-ARCHFLAGS = -march=rv32i_zmmul_zicsr -mabi=ilp32   # no divider in the geom CPU: multiply only (Zmmul)
 # -fno-jump-tables: measured smaller here (the alternative -- a compare
 # chain -- beats a jump table's own data-table overhead for this firmware's
 # actual switch statements, e.g. the GDL opcode dispatch). A real, measured
@@ -35,16 +59,15 @@ ARCHFLAGS = -march=rv32i_zmmul_zicsr -mabi=ilp32   # no divider in the geom CPU:
 # the -O1 override plus de-duplicating what used to be `static inline` code
 # across translation units -- see geom_fixed.h's own header comment for that
 # part of the story).
-CFLAGS    = $(ARCHFLAGS) -fsigned-char -O2 -g -fno-jump-tables -ffreestanding -nostdlib -fno-pic -mno-relax \
+CFLAGS    = $(ARCHFLAGS) -fsigned-char -O2 -g -fno-jump-tables -ffreestanding -nostdlib -fno-pic \
             -Wall -Wextra -ffunction-sections -fdata-sections -std=gnu11 \
-            -DGEOM_MRDP -Ibuild $(CFLAGS_EXTRA)
-LDFLAGS   = $(ARCHFLAGS) -nostdlib -Wl,--gc-sections -Wl,-Map,build/geom.map -T geom.ld
+            -DGEOM_MRDP -I$(B) $(CFLAGS_EXTRA)
 
-OBJS = build/start.o build/nolibc.o build/main.o \
-       build/geom_pipeline.o build/geom_triangle.o \
-       build/geom_fixed.o build/geom_vecmath.o build/geom_mrdp_hw.o
+OBJS = $(B)/$(START).o $(B)/nolibc.o $(B)/main.o \
+       $(B)/geom_pipeline.o $(B)/geom_triangle.o \
+       $(B)/geom_fixed.o $(B)/geom_vecmath.o $(B)/geom_mrdp_hw.o
 
-all: build/geom.bin build/geom.init
+all: $(B)/geom.bin $(B)/geom.init
 
 # ---- host tests: the fixed-point maths and the VPU C model ----
 HOSTCC ?= cc
@@ -58,21 +81,22 @@ hosttest: test/test_geom_fixed test/test_vpar
 	./test/test_geom_fixed
 	./test/test_vpar
 
-build:
-	mkdir -p build
+$(B):
+	mkdir -p $(B)
 
 # Extract just the CSR base addresses / field offsets this firmware needs.
-build/generated_csr_addrs.h: $(GEN_CSR) | build
+$(B)/generated_csr_addrs.h: $(GEN_CSR) | $(B)
 	@echo "/* auto-extracted from $(GEN_CSR) -- do not edit */" > $@
 	@echo "#ifndef GEOM_GENERATED_CSR_ADDRS_H" >> $@
 	@echo "#define GEOM_GENERATED_CSR_ADDRS_H" >> $@
-	@grep -E '#define (CSR_BASE|CSR_(MAILBOX|MRDP)_)' $(GEN_CSR) >> $@
+	@echo "#define CSR_BASE 0xf0000000L" >> $@
+	@grep -E '#define CSR_(MAILBOX|MRDP)_' $(GEN_CSR) >> $@
 	@echo "#endif" >> $@
 
-build/%.o: %.S build/generated_csr_addrs.h | build
+$(B)/%.o: %.S $(B)/generated_csr_addrs.h | $(B)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-build/%.o: %.c build/generated_csr_addrs.h | build
+$(B)/%.o: %.c $(B)/generated_csr_addrs.h | $(B)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # -O2 throughout since the geom ROM grew to 24 KiB (2026-09-26): ~15 % fewer
@@ -81,14 +105,17 @@ build/%.o: %.c build/generated_csr_addrs.h | build
 # -fno-jump-tables stays: a jump table is a D-cache read from the ROM, and
 # with it the same frames took ~30 % longer.
 
-build/geom.elf: $(OBJS) geom.ld
-	$(CC) $(LDFLAGS) -o $@ $(OBJS)
+$(B)/geom.elf: $(OBJS) $(LDSCRIPT) $(LINK_LIBS)
+	$(LINK) -o $@ $(OBJS) $(LINK_LIBS)
+ifeq ($(CPU),mips)
+	python3 ../mips/check_isa.py --clz $(MIPS_BIN)objcopy $@ .text .text_b || { rm -f $@; false; }
+endif
 
-build/geom.bin: build/geom.elf
+$(B)/geom.bin: $(B)/geom.elf
 	$(OBJCOPY) -O binary $< $@
 
 # 32-bit-word hex, one per line -- ready for $readmemh / LiteX add_ram(contents=).
-build/geom.init: build/geom.bin
+$(B)/geom.init: $(B)/geom.bin
 	od -An -tx4 -v $< | tr -s ' ' '\n' | sed '/^$$/d' > $@
 
 clean:
@@ -98,4 +125,4 @@ clean:
 
 # geom_triangle.c at -O3: its fixed-count loops (3 vertices, 3 channels) unrolled
 # -- sim/geom_full -3 % (JRB) / -4 % (Bowser), +264 bytes of ROM
-build/geom_triangle.o: CFLAGS := $(subst -O2,-O3,$(CFLAGS))
+$(B)/geom_triangle.o: CFLAGS := $(subst -O2,-O3,$(CFLAGS))

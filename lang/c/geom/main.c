@@ -16,6 +16,7 @@
 #include "geom_vecmath.h"
 #include "mailbox.h"
 #include "geom_pipeline.h"
+#include "geom_dcache.h"
 
 #define HB(code) mmio_w(CSR_MAILBOX_GEOM_MSG_ADDR, (uint32_t)(code))
 
@@ -55,8 +56,8 @@ int main(void)
 
         /* The geom core's D$ is not coherent with the game CPU's writes to
          * the GDL in SDRAM. Clean + invalidate so the walk reads fresh data.
-         * `.word 0x500F` is VexRiscv's data-cache flush. */
-        __asm__ volatile(".word 0x500F" ::: "memory");
+         * (geom_dcache.h) */
+        geom_dcache_flush();
         HB(0xB0000060u | (dl_base & 0xFFFFu)); /* past the D$ flush */
 
         geom_tris_emitted = 0;

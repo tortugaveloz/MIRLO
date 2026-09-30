@@ -5,12 +5,35 @@
 #   make PROG=demo        the spinning triangle (demo_main.c)
 #   make PROG=videotest   the scan-out test (videotest_main.c)
 #   make PROG=tone        the audio core bring-up + a 440 Hz tone (tone_main.c)
-
-LITEX_ROOT_DIRECTORY = ../../../litex
-OUTPUT_DIRECTORY = ./build
+#   make CPU=mips ...     the same for the MIPS SoC (rtl/soc/mirlo_mips.sv) -> build/mips/build.bin
 
 PROG ?= cube
 OBJECTS_tone = audio_load.o
+
+ifeq ($(CPU),mips)
+# ---- the MIPS SoC (rtl/soc/mirlo_mips.sv): lang/mips's toolchain and libraries
+BUILD    = build/mips
+PROGRAM  = build
+OBJECTS  = $(addprefix $(BUILD)/,log.o frame.o $(PROG)_main.o $(OBJECTS_$(PROG)))
+all: $(BUILD)/build.bin
+include ../../mips/program.mk
+CFLAGS  += -O2 -Wall -fno-strict-aliasing -I. -I../geom $(EXTRA_CFLAGS)
+GEOM_ELF ?= ../geom/build/mips/geom.elf
+GEOM_TRIS_EMITTED_ADDR := $(shell $(MIPS_NM) $(GEOM_ELF) 2>/dev/null | sed -n 's/^\([0-9a-f]*\) [BbDd] geom_tris_emitted$$/0x\1u/p')
+ifeq ($(GEOM_TRIS_EMITTED_ADDR),)
+$(error cannot find geom_tris_emitted in $(GEOM_ELF) -- build lang/c/geom (CPU=mips) first)
+endif
+CFLAGS  += -DGEOM_TRIS_EMITTED_ADDR=$(GEOM_TRIS_EMITTED_ADDR)
+$(BUILD)/%.o: %.c
+	@mkdir -p $(BUILD)
+	$(MIPS_GCC) $(CFLAGS) -c $< -o $@
+clean:
+	rm -rf build
+.PHONY: all clean
+else
+LITEX_ROOT_DIRECTORY = ../../../litex
+OUTPUT_DIRECTORY = ./build
+
 OBJECTS = init_asm.o log.o frame.o $(PROG)_main.o $(OBJECTS_$(PROG))
 
 BUILD_DIR = $(LITEX_ROOT_DIRECTORY)/build/litex
@@ -72,3 +95,4 @@ clean:
 	$(RM) -R $(OUTPUT_DIRECTORY)
 
 .PHONY: all clean hosttest
+endif

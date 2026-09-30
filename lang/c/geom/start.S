@@ -6,7 +6,10 @@
  * .data (it is linked/loaded in-place in the scratchpad image, so the copy
  * is a no-op unless .data has a separate LMA), then call main().
  */
-    .equ MAILBOX_GEOM_MSG, 0xf000480c   /* CSR_MAILBOX_GEOM_MSG_ADDR */
+#ifndef GEOM_TRAP_MSG
+#define GEOM_TRAP_MSG 0xf000480c            /* CSR_MAILBOX_GEOM_MSG_ADDR (the RISC-V SoC's) */
+#endif
+    .equ MAILBOX_GEOM_MSG, GEOM_TRAP_MSG
 
     .section .text.start, "ax"
     .global _start

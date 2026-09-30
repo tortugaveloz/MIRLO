@@ -24,8 +24,23 @@ module mrdp_ucode_rom (
     output wire [3:0] u_sp,
     output wire [0:0] u_fl
 );
+    wire [72:0] q;
+`ifdef ALTERA_RESERVED_QIS
+`ifndef MRDP_UCODE_LOGIC
+`define MRDP_UCODE_M10K
+`endif
+`endif
+`ifdef MRDP_UCODE_M10K
+    altsyncram #(.operation_mode("ROM"), .width_a(73), .widthad_a(8), .numwords_a(256),
+        .outdata_reg_a("UNREGISTERED"), .address_reg_a("CLOCK0"), .init_file("mrdp_ucode_rom.mif"),
+        .ram_block_type("M10K"), .intended_device_family("Cyclone V"), .lpm_type("altsyncram")
+    ) rom_m10k (.clock0(clk), .address_a(a), .q_a(q), .aclr0(1'b0), .aclr1(1'b0), .addressstall_a(1'b0),
+        .addressstall_b(1'b0), .address_b(1'b1), .byteena_a(1'b1), .byteena_b(1'b1), .clock1(1'b1),
+        .clocken0(1'b1), .clocken1(1'b1), .clocken2(1'b1), .clocken3(1'b1), .data_a({73{1'b1}}),
+        .data_b(1'b1), .eccstatus(), .q_b(), .rden_a(1'b1), .rden_b(1'b1), .wren_a(1'b0), .wren_b(1'b0));
+`else
     reg [72:0] rom [0:255];
-    reg [72:0] q;
+    reg [72:0] q_r;
     integer i;
     initial begin
         for (i = 0; i < 256; i = i + 1) rom[i] = 73'h6;
@@ -237,7 +252,9 @@ module mrdp_ucode_rom (
         rom[205] = 73'h0000001500000810004;
         rom[206] = 73'h0000001420000200004;   // slopewz
     end
-    always @(posedge clk) q <= rom[a];
+    always @(posedge clk) q_r <= rom[a];
+    assign q = q_r;
+`endif
     assign u_seq = q[2:0];
     assign u_cond = q[5:3];
     assign u_tgt = q[13:6];

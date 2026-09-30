@@ -103,10 +103,15 @@ uint32_t fx_to_bits_n(int32_t fx, int frac_bits);
  * by the divisor of the most recent fx_recip_norm() -- only for a caller that
  * has just called fx_recip_norm() for that divisor with nothing in between
  * (divw(), the barycentric weights). The host keeps the C (the reference). */
-#if defined(__riscv) && !defined(GEOM_HOST_TEST)
+#if (defined(__riscv) || defined(__mips__)) && !defined(GEOM_HOST_TEST)
+#ifdef __mips__
+#include "mips_cfu.h"             /* the geom core on MIPS (rtl/mips/mips_geom.sv) */
+#define GEOM_FX_CFU(id, rd, a, b) ((rd) = MCFU(id, a, b))
+#else
 #define GEOM_FX_CFU(id, rd, a, b) \
     __asm__ volatile(".insn r 0x0B, %3, %4, %0, %1, %2" \
                      : "=r"(rd) : "r"(a), "r"(b), "i"(((id) >> 7) & 0x7), "i"((id) & 0x7F))
+#endif
 static inline __attribute__((always_inline)) int32_t fx_mul_cfu(int32_t a, int32_t b) {
     int32_t rd; GEOM_FX_CFU(0x52, rd, a, b); return rd;
 }

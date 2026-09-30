@@ -1,4 +1,5 @@
-// Audio core: VexRiscvAudio (rv32i + Zmmul, no FPU, no divider, no caches)
+// Audio core: VexRiscvAudio (rv32i + Zmmul, no FPU, no divider, no caches),
+// or with AUDIO_MIPS defined (Mirlo-N64) mips_lite (rtl/mips/mips_lite.sv)
 // with its own IMEM and DMEM, and a CFU of audio DSP instructions
 // (AudioDspCfu.v: the ucode's envelope mixer and resampler). It plays the N64 RSP's audio role (runs the
 // ABI2 command list src/audio/synthesis.c builds) and the AI's (streams PCM
@@ -13,6 +14,8 @@
 //   0x8000_2000  DMEM  8 KiB  .rodata/.data/.bss/stack/work buffers.
 //                             Core and SoC: read/write (true dual port).
 //   0x8000_4000  CTRL          see below. Core and SoC.
+//   0x8000_6000  IMEM2 (IMEM2_AW != 0) a second code bank, as IMEM
+//                             (Mirlo-N64: the second audio ABI's code).
 //   anything else (core dBus)  -> Wishbone master to the SoC bus (SDRAM,
 //                                  CSRs such as the APF audio FIFO).
 //
@@ -34,7 +37,7 @@
 //     data is registered and presented the cycle after.
 `default_nettype none
 
-module AudioCore_tdp8 #(parameter AW = 11) (
+module AudioCore_tdp8 #(parameter AW = 11, parameter INIT = "") (
     input  wire          clk,
     input  wire          en_a,
     input  wire          we_a,
@@ -48,6 +51,7 @@ module AudioCore_tdp8 #(parameter AW = 11) (
     output reg  [7:0]    q_b
 );
     reg [7:0] ram [0:(1<<AW)-1];
+    initial if (INIT != "") $readmemh(INIT, ram);
     always @(posedge clk) begin
         if (en_a) begin
             if (we_a) begin ram[addr_a] <= d_a; q_a <= d_a; end
@@ -62,11 +66,71 @@ module AudioCore_tdp8 #(parameter AW = 11) (
     end
 endmodule
 
+// DMEM when nothing but the core reaches it (AudioCore SOC_PORT = 0,
+// Mirlo-N64): one 32-bit port with byte enables, initialised from MIF (the
+// firmware's .rodata/.data). An altsyncram, as GeomTcmRam: every inferred
+// template (true dual port, single port, with and without $readmemh) came out
+// as 64 Kbit of registers ("uninferred due to asynchronous read logic").
+// The address is registered while `en` (addressstall), the output
+// unregistered from it -- the byte lanes' `q <= ram[a]` of AudioCore_tdp8.
+// In simulation (VERILATOR): the same in behaviour, from HEX (32-bit words).
+module AudioCore_dmem #(parameter AW = 11, parameter MIF = "", parameter HEX = "") (
+    input  wire          clk,
+    input  wire          en,
+    input  wire [3:0]    we,
+    input  wire [AW-1:0] addr,
+    input  wire [31:0]   d,
+    output wire [31:0]   q
+);
+`ifdef VERILATOR
+    reg [31:0] ram [0:(1<<AW)-1];
+    reg [AW-1:0] a_q;
+    initial if (HEX != "") $readmemh(HEX, ram);
+    integer i;
+    always @(posedge clk)
+        if (en) begin
+            a_q <= addr;
+            for (i = 0; i < 4; i = i + 1) if (we[i]) ram[addr][8*i +: 8] <= d[8*i +: 8];
+        end
+    assign q = ram[a_q];
+`else
+    altsyncram #(
+        .operation_mode                ("SINGLE_PORT"),
+        .width_a                       (32),
+        .widthad_a                     (AW),
+        .numwords_a                    (1 << AW),
+        .width_byteena_a               (4),
+        .byte_size                     (8),
+        .outdata_reg_a                 ("UNREGISTERED"),
+        .outdata_aclr_a                ("NONE"),
+        .clock_enable_input_a          ("BYPASS"),
+        .clock_enable_output_a         ("BYPASS"),
+        .read_during_write_mode_port_a ("NEW_DATA_NO_NBE_READ"),
+        .init_file                     (MIF),
+        .power_up_uninitialized        ("FALSE"),
+        .ram_block_type                ("M10K"),
+        .intended_device_family        ("Cyclone V"),
+        .lpm_type                      ("altsyncram")
+    ) ram (
+        .clock0         (clk),
+        .address_a      (addr),
+        .addressstall_a (~en),
+        .data_a         (d),
+        .wren_a         (en & (|we)),
+        .byteena_a      (we | {4{~(|we)}}),
+        .q_a            (q),
+        .aclr0 (1'b0), .aclr1 (1'b0), .address_b (1'b1), .addressstall_b (1'b0), .byteena_b (1'b1),
+        .clock1 (1'b1), .clocken0 (1'b1), .clocken1 (1'b1), .clocken2 (1'b1), .clocken3 (1'b1),
+        .data_b (1'b1), .eccstatus (), .q_b (), .rden_a (1'b1), .rden_b (1'b1), .wren_b (1'b0)
+    );
+`endif
+endmodule
+
 // Simple dual port: one write port, one read port (the canonical M10K
 // template). IMEM uses this, not the true-dual-port one: with its core-side
 // port read-only, Quartus 25.1 declined to infer the TDP template ("uninferred
 // due to asynchronous read logic") and built 64 Kbit of IMEM out of registers.
-module AudioCore_sdp8 #(parameter AW = 11) (
+module AudioCore_sdp8 #(parameter AW = 11, parameter INIT = "") (
     input  wire          clk,
     input  wire          we,
     input  wire [AW-1:0] waddr,
@@ -76,6 +140,7 @@ module AudioCore_sdp8 #(parameter AW = 11) (
     output reg  [7:0]    q
 );
     reg [7:0] ram [0:(1<<AW)-1];
+    initial if (INIT != "") $readmemh(INIT, ram);
     always @(posedge clk) begin
         if (we) ram[waddr] <= d;
         if (re) q <= ram[raddr];
@@ -84,7 +149,21 @@ endmodule
 
 module AudioCore #(
     parameter IMEM_AW = 11,   // words: 2^11 * 4 = 8 KiB
-    parameter DMEM_AW = 11
+    parameter DMEM_AW = 11,
+    // a second IMEM bank at 0x8000_6000, 2^IMEM2_AW words (0: none)
+    parameter IMEM2_AW = 0,
+    parameter IMEM2_INIT0 = "", parameter IMEM2_INIT1 = "", parameter IMEM2_INIT2 = "", parameter IMEM2_INIT3 = "",
+    // Firmware baked in at synthesis (Mirlo-N64: nobody loads it): one
+    // $readmemh file per byte lane (lane i = bits 8i+7..8i); RUN_RESET 1
+    // starts the core at reset. The defaults: loaded and started by the game CPU.
+    parameter IMEM_INIT0 = "", parameter IMEM_INIT1 = "", parameter IMEM_INIT2 = "", parameter IMEM_INIT3 = "",
+    parameter DMEM_INIT0 = "", parameter DMEM_INIT1 = "", parameter DMEM_INIT2 = "", parameter DMEM_INIT3 = "",
+    parameter RUN_RESET = 1'b0,
+    // 0: nothing reaches IMEM/DMEM from the SoC (Mirlo-N64: the firmware is
+    // baked in) -- s_* is only CTRL, and DMEM is a single-port RAM
+    parameter SOC_PORT = 1'b1,
+    parameter DMEM_MIF = "",                // SOC_PORT 0: DMEM's contents (synthesis)
+    parameter DMEM_HEX = ""                 //             (Verilator: 32-bit words)
 ) (
     input  wire        clk,
     input  wire        rst,
@@ -110,7 +189,9 @@ module AudioCore #(
     input  wire        m_ack,
     input  wire        m_err,
 
-    output wire        running
+    output wire        running,
+    output wire [31:0] dbg_state,          // MBOX0 (the firmware's state word)
+    output wire [31:0] dbg_pc
 );
     // ---------------------------------------------------------------- CPU
     wire        ib_cmd_valid;
@@ -129,9 +210,15 @@ module AudioCore #(
 
     reg run;
     assign running = run;
+    assign dbg_pc = ib_cmd_pc;
     wire core_rst = rst | ~run;
 
+`ifdef AUDIO_MIPS
+    // Mirlo-N64: the MIPS core (rtl/mips/mips_lite.sv), same ports
+    mips_lite #(.RESET_PC(32'h8000_0000)) cpu (
+`else
     VexRiscvAudio cpu (
+`endif
         .clk                      (clk),
         .reset                    (core_rst),
         .timerInterrupt           (1'b0),
@@ -180,12 +267,13 @@ module AudioCore #(
     );
 
     // ------------------------------------------------------- SoC decode
-    // Word address bits [12:11] of the 0x8000 window: 0 IMEM, 1 DMEM, 2 CTRL.
+    // Word address bits [12:11] of the 0x8000 window: 0 IMEM, 1 DMEM, 2 CTRL, 3 IMEM2.
     wire [1:0] s_blk   = s_adr[12:11];
     wire       s_req   = s_cyc & s_stb & ~s_ack;
     wire       s_imem  = s_req & (s_blk == 2'd0);
     wire       s_dmem  = s_req & (s_blk == 2'd1);
     wire       s_ctrl  = s_req & (s_blk == 2'd2);
+    wire       s_imem2 = s_req & (s_blk == 2'd3);
     reg  [1:0] s_blk_q;
 
     // ----------------------------------------------------- core dBus decode
@@ -219,7 +307,7 @@ module AudioCore #(
     wire [IMEM_AW-1:0] imem_raddr = run ? ib_cmd_pc[IMEM_AW+1:2] : s_adr[IMEM_AW-1:0];
     genvar gi;
     generate for (gi = 0; gi < 4; gi = gi + 1) begin : g_imem
-        AudioCore_sdp8 #(.AW(IMEM_AW)) ram (
+        AudioCore_sdp8 #(.AW(IMEM_AW), .INIT(gi == 0 ? IMEM_INIT0 : gi == 1 ? IMEM_INIT1 : gi == 2 ? IMEM_INIT2 : IMEM_INIT3)) ram (
             .clk   (clk),
             .we    (s_imem & s_we & s_sel[gi]),
             .waddr (s_adr[IMEM_AW-1:0]),
@@ -229,8 +317,32 @@ module AudioCore #(
             .q     (imem_q[8*gi +: 8])
         );
     end endgenerate
-    assign ib_rsp_inst = imem_q;
     wire [31:0] imem_q_b = imem_q;
+
+    // IMEM2: the same, fetched when pc[14:13] is 3 (both banks are read on
+    // every fetch; the bank's bit, registered with them, picks the word)
+    wire [31:0] imem2_q;
+    generate if (IMEM2_AW != 0) begin : g_imem2
+        wire imem2_soc_rd = s_imem2 & ~s_we & ~run;
+        wire [IMEM2_AW-1:0] imem2_raddr = run ? ib_cmd_pc[IMEM2_AW+1:2] : s_adr[IMEM2_AW-1:0];
+        for (gi = 0; gi < 4; gi = gi + 1) begin : lane
+            AudioCore_sdp8 #(.AW(IMEM2_AW), .INIT(gi == 0 ? IMEM2_INIT0 : gi == 1 ? IMEM2_INIT1 : gi == 2 ? IMEM2_INIT2 : IMEM2_INIT3)) ram (
+                .clk   (clk),
+                .we    (s_imem2 & s_we & s_sel[gi]),
+                .waddr (s_adr[IMEM2_AW-1:0]),
+                .d     (s_dat_w[8*gi +: 8]),
+                .re    (run ? ib_cmd_valid : imem2_soc_rd),
+                .raddr (imem2_raddr),
+                .q     (imem2_q[8*gi +: 8])
+            );
+        end
+        reg ib_b2;
+        always @(posedge clk) if (run & ib_cmd_valid) ib_b2 <= ib_cmd_pc[14];
+        assign ib_rsp_inst = ib_b2 ? imem2_q : imem_q;
+    end else begin : g_no_imem2
+        assign imem2_q = 32'd0;
+        assign ib_rsp_inst = imem_q;
+    end endgenerate
 
     always @(posedge clk) begin
         if (core_rst) ib_rsp_valid <= 1'b0;
@@ -241,7 +353,20 @@ module AudioCore #(
     wire [31:0] dmem_q_a, dmem_q_b;
     wire        d_dmem_fire = d_fire & d_dmem;
     generate for (gi = 0; gi < 4; gi = gi + 1) begin : g_dmem
-        AudioCore_tdp8 #(.AW(DMEM_AW)) ram (
+        if (!SOC_PORT) begin : none
+            if (gi == 0) begin : one
+            AudioCore_dmem #(.AW(DMEM_AW), .MIF(DMEM_MIF), .HEX(DMEM_HEX)) ram (
+                .clk  (clk),
+                .en   (d_dmem_fire),
+                .we   ({4{d_dmem_fire & db_cmd_wr}} & d_mask),
+                .addr (db_cmd_addr[DMEM_AW+1:2]),
+                .d    (db_cmd_data),
+                .q    (dmem_q_a)
+            );
+            end
+            assign dmem_q_b[8*gi +: 8] = 8'd0;
+        end else begin : tdp
+        AudioCore_tdp8 #(.AW(DMEM_AW), .INIT(gi == 0 ? DMEM_INIT0 : gi == 1 ? DMEM_INIT1 : gi == 2 ? DMEM_INIT2 : DMEM_INIT3)) ram (
             .clk    (clk),
             .en_a   (d_dmem_fire),
             .we_a   (d_dmem_fire & db_cmd_wr & d_mask[gi]),
@@ -254,11 +379,13 @@ module AudioCore #(
             .d_b    (s_dat_w[8*gi +: 8]),
             .q_b    (dmem_q_b[8*gi +: 8])
         );
+        end
     end endgenerate
 
     // ------------------------------------------------------------- CTRL
     reg  [31:0] cycles;
     reg  [31:0] mbox [0:7];
+    assign dbg_state = mbox[0];
     // Word index inside CTRL: 0 RUN, 1 CYCLES, 2..9 MBOX[0..7].
     wire [3:0]  s_ci = s_adr[3:0];
     wire [3:0]  d_ci = db_cmd_addr[5:2];
@@ -276,7 +403,7 @@ module AudioCore #(
     always @(posedge clk) begin
         cycles <= cycles + 32'd1;
         if (rst) begin
-            run <= 1'b0;
+            run <= RUN_RESET;
             for (k = 0; k < 8; k = k + 1) mbox[k] <= 32'd0;
         end else begin
             // core side first, SoC second: the SoC wins a same-cycle clash
@@ -300,6 +427,7 @@ module AudioCore #(
         case (s_blk_q)
             2'd0:    s_dat_r = imem_q_b;
             2'd1:    s_dat_r = dmem_q_b;
+            2'd3:    s_dat_r = imem2_q;
             default: s_dat_r = s_ctrl_q;
         endcase
     end
