@@ -10,7 +10,7 @@
 #
 # CSR addresses (the APF audio FIFO) come from the LiteX build's csr.h.
 
-CROSS   ?= $(HOME)/local/opt/riscv-gcc/bin/riscv-none-elf-
+CROSS   ?= riscv-none-elf-
 CC       = $(CROSS)gcc
 OBJCOPY  = $(CROSS)objcopy
 SIZE     = $(CROSS)size
