@@ -31,7 +31,11 @@
 #define ACFU_ID_VALUE  0x41445333u   /* "ADS3" */
 #define ACFU_ID_ADS2   0x41445332u   /* the build without the ADPCM ops */
 
-#if defined(__riscv) && !defined(ACFU_MODEL)
+#if defined(__mips__) && !defined(ACFU_MODEL)
+/* the audio core's MIPS (rtl/mips/mips_lite.sv): the CFU as major opcode 0x1F */
+#include "mips_cfu.h"
+#define ACFU(id, a, b) MCFU((id), (a), (b))
+#elif defined(__riscv) && !defined(ACFU_MODEL)
 /* custom-0, funct3 = 0, funct7 = id (VexRiscv delivers {funct3, funct7}) */
 #define ACFU(id, a, b) ({ uint32_t _r; \
     __asm__ volatile(".insn r 0x0B, 0, %3, %0, %1, %2" : "=r"(_r) : "r"((uint32_t)(a)), "r"((uint32_t)(b)), "i"(id)); \

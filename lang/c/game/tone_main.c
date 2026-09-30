@@ -14,7 +14,10 @@
 #include <system.h>
 
 #include "audio_load.h"
-#include "../audio/build/main/audio_fw.h"
+#ifndef AUDIO_FW_HEADER
+#define AUDIO_FW_HEADER "../audio/build/main/audio_fw.h"   /* CPU=mips: build/mips/main (Makefile) */
+#endif
+#include AUDIO_FW_HEADER
 
 #define ST_TONE 0xA0D10002u          /* lang/c/audio/main.c: tests done, tone playing */
 

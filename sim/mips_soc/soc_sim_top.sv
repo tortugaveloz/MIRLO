@@ -24,10 +24,19 @@ module soc_sim_top (
     output wire  [31:0] x_addr, x_rdata, x_wdata
 );
 wire [15:0] dq;
+// the APF audio FIFO (core_top's): its fill, flushed, drained at 48 kHz while playing
+logic [11:0] aud_fill = 0;
+logic [10:0] aud_div = 0;
+wire         aud_flush, aud_play;
+always_ff @(posedge clk_sys) begin
+    aud_div <= aud_div == 11'd1308 ? 11'd0 : aud_div + 11'd1;          // 62.832 MHz / 48 kHz
+    if (aud_flush) aud_fill <= 0;
+    else aud_fill <= aud_fill + {11'd0, audio_wr && aud_fill != 12'hFFF} - {11'd0, aud_play && aud_div == 0 && aud_fill != 0};
+end
 mirlo_mips #(.SDR_T_INIT(100)) soc (
     .altera_reserved_tck(1'b0), .altera_reserved_tdi(1'b0), .altera_reserved_tdo(), .altera_reserved_tms(1'b0),
-    .apf_audio_buffer_fill(12'd0), .apf_audio_bus_out(audio_out), .apf_audio_bus_wr(audio_wr), .apf_audio_flush(),
-    .apf_audio_playback_en(),
+    .apf_audio_buffer_fill(aud_fill), .apf_audio_bus_out(audio_out), .apf_audio_bus_wr(audio_wr), .apf_audio_flush(aud_flush),
+    .apf_audio_playback_en(aud_play),
     .apf_bridge_boot_ready(boot_ready), .apf_bridge_command_result_code(3'd0), .apf_bridge_complete_trigger(1'b0),
     .apf_bridge_current_address(32'd0), .apf_bridge_data_offset(), .apf_bridge_file_size(32'd0),
     .apf_bridge_file_size_wr(), .apf_bridge_host_loaded(host_loaded), .apf_bridge_host_reset_n(host_reset_n),

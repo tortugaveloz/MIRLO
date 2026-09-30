@@ -17,7 +17,7 @@ PROGRAM  = build
 OBJECTS  = $(addprefix $(BUILD)/,log.o frame.o $(PROG)_main.o $(OBJECTS_$(PROG)))
 all: $(BUILD)/build.bin
 include ../../mips/program.mk
-CFLAGS  += -O2 -Wall -fno-strict-aliasing -I. -I../geom $(EXTRA_CFLAGS)
+CFLAGS  += -O2 -Wall -fno-strict-aliasing -I. -I../geom $(EXTRA_CFLAGS) -DAUDIO_FW_HEADER='"../audio/build/mips/main/audio_fw.h"'
 GEOM_ELF ?= ../geom/build/mips/geom.elf
 GEOM_TRIS_EMITTED_ADDR := $(shell $(MIPS_NM) $(GEOM_ELF) 2>/dev/null | sed -n 's/^\([0-9a-f]*\) [BbDd] geom_tris_emitted$$/0x\1u/p')
 ifeq ($(GEOM_TRIS_EMITTED_ADDR),)

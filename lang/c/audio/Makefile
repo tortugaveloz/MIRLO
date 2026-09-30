@@ -20,7 +20,7 @@ GEN_CSR  = ../../../litex/build/litex/software/include/generated/csr.h
 ARCHFLAGS = -march=rv32i_zmmul_zicsr -mabi=ilp32
 CFLAGS    = $(ARCHFLAGS) -O2 -g -ffreestanding -nostdlib -fno-pic -mno-relax -fsigned-char \
             -fno-strict-aliasing -Wall -Wextra -ffunction-sections -fdata-sections -std=gnu11 \
-            -Ibuild $(CFLAGS_EXTRA)
+            -I$(GEN) $(CFLAGS_EXTRA)
 LDFLAGS   = $(ARCHFLAGS) -nostdlib -Wl,--gc-sections -Wl,-Map,$(B)/audio.map -T audio.ld
 
 # PROG=main (default): the bring-up program -- self-tests, benchmarks, then a
@@ -28,18 +28,42 @@ LDFLAGS   = $(ARCHFLAGS) -nostdlib -Wl,--gc-sections -Wl,-Map,$(B)/audio.map -T 
 # PROG=<file without .c>. Each builds into build/$(PROG)/.
 PROG ?= main
 B     = build/$(PROG)
-OBJS  = $(B)/start.o $(B)/$(PROG).o $(B)/nolibc.o
+GEN   = build
+START = start
+LINK  = $(CC) $(LDFLAGS)
+
+# The CPU: riscv (VexRiscvAudio, the LiteX SoC) or mips (rtl/mips/mips_lite.sv,
+# the MIPS SoC -- rtl/soc/mirlo_mips.sv). Same C; the CFU instructions per
+# audio_cfu.h. `make CPU=mips` builds into build/mips/$(PROG)/.
+ifeq ($(CPU),mips)
+include ../../mips/mips.mk
+B         = build/mips/$(PROG)
+GEN       = build/mips
+GEN_CSR   = ../../mips/include/generated/csr.h
+CC        = $(MIPS_GCC)
+OBJCOPY   = $(MIPS_BIN)objcopy
+SIZE      = $(MIPS_BIN)size
+# (no store merging, no memset/memcpy calls made of loops: -nostdlib)
+ARCHFLAGS = $(MIPS_LITE_CFLAGS) -fno-store-merging -fno-tree-loop-distribute-patterns -I../mips
+CFLAGS    = $(ARCHFLAGS) -O2 -g -ffreestanding -nostdlib -fsigned-char \
+            -fno-strict-aliasing -Wall -Wextra -ffunction-sections -fdata-sections -std=gnu11 \
+            -I$(GEN) $(CFLAGS_EXTRA)
+LINK      = $(MIPS_LD) -EL --gc-sections -Map=$(B)/audio.map -T audio_mips.ld
+START     = start_mips
+endif
+OBJS  = $(B)/$(START).o $(B)/$(PROG).o $(B)/nolibc.o
 
 all: $(B)/audio_imem.bin $(B)/audio_dmem.bin $(B)/audio_fw.h
 
-build $(B):
+$(GEN) $(B):
 	mkdir -p $@
 
-build/generated_csr_addrs.h: $(GEN_CSR) | build
+$(GEN)/generated_csr_addrs.h: $(GEN_CSR) | $(GEN)
 	@echo "/* auto-extracted from $(GEN_CSR) -- do not edit */" > $@
 	@echo "#ifndef AUDIO_GENERATED_CSR_ADDRS_H" >> $@
 	@echo "#define AUDIO_GENERATED_CSR_ADDRS_H" >> $@
-	@grep -E '#define (CSR_BASE|CSR_APF_AUDIO_)' $(GEN_CSR) >> $@
+	@echo "#define CSR_BASE 0xf0000000L" >> $@
+	@grep -E '#define CSR_APF_AUDIO_' $(GEN_CSR) >> $@
 	@grep -E '#define CONFIG_CLOCK_FREQUENCY' $(dir $(GEN_CSR))soc.h >> $@
 	@echo "#endif" >> $@
 
@@ -48,11 +72,14 @@ $(B)/%.o: %.S | $(B)
 
 # IMEM is 8 KiB: the libc helpers are -Os.
 $(B)/nolibc.o: CFLAGS := $(subst -O2,-Os,$(CFLAGS))
-$(B)/%.o: %.c build/generated_csr_addrs.h audio_hw.h | $(B)
+$(B)/%.o: %.c $(GEN)/generated_csr_addrs.h audio_hw.h | $(B)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(B)/audio.elf: $(OBJS) audio.ld
-	$(CC) $(LDFLAGS) -o $@ $(OBJS)
+$(B)/audio.elf: $(OBJS) audio.ld audio_mips.ld
+	$(LINK) -o $@ $(OBJS)
+ifeq ($(CPU),mips)
+	python3 ../mips/check_isa.py $(MIPS_BIN)objcopy $@ .text || { rm -f $@; false; }
+endif
 	$(SIZE) $@
 
 $(B)/audio_imem.bin: $(B)/audio.elf

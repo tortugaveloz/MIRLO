@@ -86,6 +86,7 @@ build_id.v
 c5_pin_model_dump.txt
 cr_ie_info.json
 projects_*/
+!/projects_mips/
 
 # Editors and OS
 .idea
