@@ -139,6 +139,8 @@ int main(int argc, char **argv)
     t = new Vsoc_sim_top;
     long load_at = getenv("LOAD_AT") ? atol(getenv("LOAD_AT")) : 3000;
     t->host_reset_n = 0; t->host_loaded = 0; t->cont1_key = 0;
+    t->file_size = noload ? 0u : (uint32_t)img.size(); t->br_complete = 0;
+    long br_done_at = -1;                           // the bridge's read completes then (sys cycles)
     t->reset = 1;
     for (int i = 0; i < 8; i++) pend_c[i] = -1;
     for (int b = 0; b < 4; b++) t_act[b] = t_pre[b] = t_wr[b] = -1000;
@@ -175,6 +177,19 @@ int main(int argc, char **argv)
                 else { putchar(t->uart_byte); if (t->uart_byte == '\n') fflush(stdout); }
             }
             if (t->audio_wr) audio_words++;
+            // the Pocket's bridge: slot 0 is the program's file; a read lands in SDRAM
+            // at ~40 MB/s (the APF bridge's rate), then the completion toggles high
+            if (t->br_req_read) {
+                uint32_t off = t->br_offset, len = t->br_length, a = t->br_addr;
+                if (t->br_slot == 0 && off + len <= img.size() && (a & 3) == 0 && (len & 3) == 0)
+                    for (uint32_t i = 0; i < len; i += 4)
+                        wr_word(((a & 0x3FFFFFF) >> 2) + i / 4, (uint32_t)img[off + i] | img[off + i + 1] << 8 |
+                                img[off + i + 2] << 16 | (uint32_t)img[off + i + 3] << 24);
+                else printf("[bridge: read slot %u off %u len %u -> %08x not modelled]\n", t->br_slot, off, len, a);
+                t->br_complete = 0;
+                br_done_at = sys + 200 + len * 62832000.0 / 40e6;
+            }
+            if (br_done_at >= 0 && sys >= br_done_at) { t->br_complete = 1; br_done_at = -1; }
             static long xt = getenv("XTRACE") ? atol(getenv("XTRACE")) : 0;
             if (xt && t->x_ack) { xt--; printf("[x %s %08x = %08x]\n", t->x_we ? "W" : "R", t->x_addr, t->x_we ? t->x_wdata : t->x_rdata); }
             if (t->vblank && !pvb) {

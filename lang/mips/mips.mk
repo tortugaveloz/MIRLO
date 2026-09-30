@@ -24,10 +24,16 @@ MIPS_OBJCOPY  = $(MIPS_BIN)objcopy -I elf32-tradlittlemips
 MIPS_NM       = $(MIPS_BIN)nm
 MIPS_LD       = $(MIPS_BIN)ld
 
+# (a distribution's GCC may default to _FORTIFY_SOURCE and stack protection:
+# not for bare metal -- fortify's inline checked memcpy even emits swl/swr,
+# which the helper cores do not have)
 MIPS_COMMON  := -mabi=32 -EL -mno-abicalls -fno-pic -G0 -nostdinc -isystem $(shell $(MIPS_CC) -print-file-name=include) \
-                -ffreestanding -fsigned-char -ffp-contract=off
+                -ffreestanding -fsigned-char -ffp-contract=off \
+                -U_FORTIFY_SOURCE -fno-stack-protector -fno-stack-clash-protection
 MIPS_GAME_ARCH := -march=vr4300 -mhard-float -msingle-float -mfp32 -Wa,--no-warn
 MIPS_LITE_ARCH := -march=mips32 -msoft-float -mno-imadd -mno-check-zero-division
 MIPS_GAME_CFLAGS = $(MIPS_COMMON) $(MIPS_GAME_ARCH)
-MIPS_LITE_CFLAGS = $(MIPS_COMMON) $(MIPS_LITE_ARCH)
+# (the helper cores are -nostdlib, but take picolibc's headers: make -f lib.mk VARIANT=lite)
+MIPS_LITE_INC   := -isystem $(MIPS_ROOT)build/lite/include
+MIPS_LITE_CFLAGS = $(MIPS_COMMON) $(MIPS_LITE_ARCH) $(MIPS_LITE_INC)
 MIPS_INCLUDE := $(MIPS_ROOT)include

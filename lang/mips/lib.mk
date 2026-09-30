@@ -16,7 +16,7 @@ O           := $(MIPS_ROOT)build/$(VARIANT)
 ifeq ($(VARIANT),game)
 ARCH_CFLAGS := $(MIPS_GAME_CFLAGS)
 else
-ARCH_CFLAGS := $(MIPS_LITE_CFLAGS)
+ARCH_CFLAGS := $(MIPS_COMMON) $(MIPS_LITE_ARCH)
 endif
 LIB_CFLAGS  := $(ARCH_CFLAGS) -O2 -ffunction-sections -fdata-sections
 

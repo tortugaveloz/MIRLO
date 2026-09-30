@@ -95,3 +95,5 @@ projects_*/
 *.sw?
 *~
 **/.DS_Store
+/projects_mips*.log
+/projects_mips/*.cdf

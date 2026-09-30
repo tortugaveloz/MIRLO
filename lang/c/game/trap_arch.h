@@ -2,7 +2,8 @@
  * reporter, stall watchdog, PC profiler and periodic hook):
  *   RISC-V (the LiteX SoC): mcause/mepc/mtval, the CLINT's machine timer;
  *   MIPS (rtl/soc/mirlo_mips.sv): COP0 Cause/EPC/BadVAddr, Count/Compare
- *     (IP7; Count runs at half the clock). trap_handler() is called by
+ *     (IP7; Count runs at half the clock; time from TIMER0's uptime).
+ *     trap_handler() is called by
  *     lang/mips/linker/init_asm.S's vector with the caller-saved registers
  *     saved, and eret follows its return. */
 #ifndef TRAP_ARCH_H
@@ -10,6 +11,7 @@
 #include <stdint.h>
 
 #ifdef __mips__
+#include <generated/csr.h>
 #define TRAP_HANDLER_ATTR
 static inline uint32_t trap_cause(void) { uint32_t v; __asm__ volatile("mfc0 %0, $13" : "=r"(v)); return v; }
 static inline uint32_t trap_epc(void)   { uint32_t v; __asm__ volatile("mfc0 %0, $14" : "=r"(v)); return v; }
@@ -28,6 +30,21 @@ static inline void timer_irq_enable(void)  { mips_set_status(mips_status() | (1u
 static inline void timer_irq_disable(void) { mips_set_status(mips_status() & ~(1u << 15)); }
 /* an interrupt nobody handles: mask it where it comes from */
 static inline void trap_mask_stray(uint32_t c) { mips_set_status(mips_status() & ~(c & 0xFF00u)); }
+/* sys-clock time (64-bit: TIMER0's uptime), and the timer interrupt at time t */
+static inline uint64_t timer_now(void) { timer0_uptime_latch_write(1); return timer0_uptime_cycles_read(); }
+static inline void timer_irq_at(uint64_t t)
+{
+    uint64_t now = timer_now();
+    timer_irq_arm(t > now + 2u ? (unsigned long)(t - now) : 2ul);
+}
+/* interrupts off / back as they were (Status.IE) */
+static inline unsigned long irq_save(void)
+{
+    uint32_t s = mips_status();
+    mips_set_status(s & ~1u);
+    return s & 1u;
+}
+static inline void irq_restore(unsigned long m) { if (m) mips_set_status(mips_status() | 1u); }
 #else
 #include <generated/mem.h>
 #define TRAP_HANDLER_ATTR __attribute__((interrupt("machine"), aligned(4)))
@@ -57,5 +74,19 @@ static inline void timer_irq_enable(void)
 }
 static inline void timer_irq_disable(void) { __asm__ volatile("csrc mie, %0" :: "r"(1u << 7)); }
 static inline void trap_mask_stray(uint32_t c) { (void)c; __asm__ volatile("csrc mstatus, %0" :: "r"(1u << 7)); }  /* MPIE: stay masked */
+static inline uint64_t timer_now(void) { return clint_mtime(); }
+static inline void timer_irq_at(uint64_t t)
+{
+    CLINT_REG(0x4004) = 0xFFFFFFFFu;
+    CLINT_REG(0x4000) = (uint32_t)t;
+    CLINT_REG(0x4004) = (uint32_t)(t >> 32);
+}
+static inline unsigned long irq_save(void)
+{
+    unsigned long m;
+    __asm__ volatile("csrrci %0, mstatus, 8" : "=r"(m));
+    return m & 8u;
+}
+static inline void irq_restore(unsigned long m) { if (m) __asm__ volatile("csrsi mstatus, 8"); }
 #endif
 #endif
