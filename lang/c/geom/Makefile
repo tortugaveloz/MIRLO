@@ -19,7 +19,7 @@
 # own Scala generator (GenCoreGeomFpuCfu.scala) and rtl/geom/VexRiscvGeom.v
 # snapshot live at that tag if the fixed-point rewrite ever needs reverting.
 
-CROSS   ?= $(HOME)/local/opt/riscv-gcc/bin/riscv-none-elf-
+CROSS   ?= riscv-none-elf-
 CC       = $(CROSS)gcc
 OBJCOPY  = $(CROSS)objcopy
 
