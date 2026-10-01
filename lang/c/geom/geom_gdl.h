@@ -79,7 +79,18 @@ enum {
                               320 x 240: a game's header picks it, lang/c/game/frame.c
                               frame_set_video); the screen edges of the clip outcodes. Until
                               the first one, GEOM_FB_HRES x GEOM_FB_VRES. */
+    GDL_F3D       = 0x15,  /* arg: n (= GDL_F3D_WORDS) ; +n words: an F3DEX2 display list for
+                              the geom core to translate itself, as the N64's RSP did
+                              (geom_f3d.c, linked when the firmware is built with a
+                              translator). The words: the list's root; the address of this
+                              frame's clear-colour word (0: none) to patch with the list's
+                              background colour; where to write the translation and how
+                              many words there are; the static range [lo, hi) whose lists
+                              may be cached, and the cache's arena and its size. The
+                              translation is walked as a GDL_DL. Without a translator in
+                              the firmware the command is skipped. */
 };
+#define GDL_F3D_WORDS 8u
 
 #define GDL_OP(w)   ((uint8_t)((w) >> 24))
 #define GDL_ARG(w)  ((w) & 0x00FFFFFFu)

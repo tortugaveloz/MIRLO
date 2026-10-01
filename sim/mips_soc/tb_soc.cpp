@@ -197,11 +197,16 @@ int main(int argc, char **argv)
                 frames++;
             }
             pvb = t->vblank;
+            // the geom core's busy share: anything but its "waiting for a list"
+            // heartbeat (lang/c/geom/main.c HB 0xB0000040), per EVERY window
+            static long g_busy, g_win;
+            g_win++; if (t->geom_msg != 0xB0000040u) g_busy++;
             long ev = getenv("EVERY") ? atol(getenv("EVERY")) : 0;
             if (ev && sys % ev == 0) {
-                printf("[%ld M cycles, %lds] frame %ld cpu pc %08x geom pc %08x hb %08x audio pc %08x st %08x words %ld mrdp syncs %u\n",
+                printf("[%ld M cycles, %lds] frame %ld cpu pc %08x geom pc %08x hb %08x audio pc %08x st %08x words %ld mrdp syncs %u geom busy %.1f%%\n",
                        sys / 1000000, (long)(time(nullptr) - t0), frames, t->cpu_pc, t->geom_pc, t->geom_msg,
-                       t->audio_pc, t->audio_state, audio_words, t->mrdp_sync);
+                       t->audio_pc, t->audio_state, audio_words, t->mrdp_sync, g_win ? 100.0 * g_busy / g_win : 0.0);
+                g_busy = g_win = 0;
                 fflush(stdout);
             }
             sys++;

@@ -28,9 +28,21 @@ CFLAGS    = $(MIPS_LITE_CFLAGS) -I../mips -fsigned-char -O2 -g -fno-jump-tables 
             -fno-strict-aliasing -Wall -Wextra -ffunction-sections -fdata-sections -std=gnu11 \
             -DGEOM_MRDP -I$(B) $(CFLAGS_EXTRA)
 
+.DEFAULT_GOAL := all
 OBJS = $(B)/start_mips.o $(B)/nolibc.o $(B)/main.o \
        $(B)/geom_pipeline.o $(B)/geom_triangle.o \
        $(B)/geom_fixed.o $(B)/geom_vecmath.o $(B)/geom_mrdp_hw.o
+
+# F3D_EMIT=<path to an f3d_emit.c>: the geom core translates F3DEX2 display
+# lists itself (GDL_F3D, geom_f3d.c) with that translator (its f3d_emit.h next
+# to it). Its big tables go to SDRAM (.sdram_bss).
+ifneq ($(F3D_EMIT),)
+F3D_DIR  := $(dir $(F3D_EMIT))
+CFLAGS   += -I. -I$(F3D_DIR) -I../game -DGEOM_F3D -DF3D_BIG='__attribute__((section(".sdram_bss")))'
+OBJS     += $(B)/f3d_emit.o $(B)/geom_f3d.o
+$(B)/f3d_emit.o: $(F3D_EMIT) $(B)/generated_csr_addrs.h | $(B)
+	$(CC) $(CFLAGS) -c $< -o $@
+endif
 
 all: $(B)/geom.bin $(B)/geom.init
 

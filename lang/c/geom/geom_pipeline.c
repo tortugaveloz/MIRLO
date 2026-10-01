@@ -8,6 +8,11 @@
 #include "geom_math.h"
 #include "geom_gdl.h"
 #include "geom_dcache.h"
+
+/* GDL_F3D's translator (geom_f3d.c, linked when the firmware has one): returns
+ * the translated list to walk (ending in GDL_ENDDL), or 0 to skip the command */
+const uint32_t *geom_f3d_task(const uint32_t *args, uint32_t n) __attribute__((weak));
+const uint32_t *geom_f3d_task(const uint32_t *args, uint32_t n) { (void)args; (void)n; return 0; }
 #include "geom_triangle.h"
 #include "geom_pipeline.h"
 
@@ -1972,6 +1977,12 @@ void geom_run_display_list(const uint32_t *dl)
             if (s_dl_sp < DL_STACK_DEPTH) s_dl_stack[s_dl_sp++] = pc + 1;
             pc = (const uint32_t *)(uintptr_t)(*pc);
             break;
+        case GDL_F3D: {                           /* translate an F3DEX2 list here, then walk it */
+            const uint32_t *t = geom_f3d_task(pc, arg);
+            pc += arg;
+            if (t && s_dl_sp < DL_STACK_DEPTH) { s_dl_stack[s_dl_sp++] = pc; pc = t; }
+            break;
+        }
         case GDL_ENDDL:
             if (s_dl_sp == 0) return;
             pc = s_dl_stack[--s_dl_sp];

@@ -13,6 +13,10 @@ MEMORY {
     rom (rx)   : ORIGIN = 0x20000000, LENGTH = 0x00004000
     ram (rwx)  : ORIGIN = 0x20008000, LENGTH = 0x00004000
     rom_b (rx) : ORIGIN = 0x20010000, LENGTH = 0x00010000
+    /* SDRAM the geom core owns for its big tables (the F3DEX2 translator's,
+     * geom_f3d.c): between the texture cache and the games' data
+     * (docs/geometry_core.md) */
+    sdram (rw) : ORIGIN = 0x41610000, LENGTH = 0x00010000
 }
 
 SECTIONS
@@ -55,6 +59,13 @@ SECTIONS
         . = ALIGN(8);
         _ebss = .;
     } > ram
+
+    .sdram_bss (NOLOAD) : {
+        __sdram_bss_start = .;
+        *(.sdram_bss .sdram_bss.*)
+        . = ALIGN(4);
+        __sdram_bss_end = .;
+    } > sdram
 
     _end = .;
     _fstack = ORIGIN(ram) + LENGTH(ram);

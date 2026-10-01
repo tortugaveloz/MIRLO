@@ -25,6 +25,7 @@ void frame_submit(gdl_cur_t *c);
 /* Between frame_begin() and frame_submit(): clear this frame to 0xRRGGBB
  * instead of the default (black). */
 void frame_set_clear_rgb(uint32_t rgb);
+uint32_t *frame_clear_word(void);
 
 /* current back-buffer base (the render target of the frame in flight) */
 uint32_t frame_back_buffer(void);
