@@ -140,12 +140,13 @@ per clock. LOAD TILE writes in that layout.
 
 ## Integration
 
-* **Gateware:** `litex/mrdp.py` wraps `rtl/mrdp/mrdp_top.v`. It provides:
-  * the command FIFO, on the `cmd_data` CSR;
-  * the status CSRs `cmd_status`, `cmd_dropped`, `sync_count`, `load_count`
-    and `status`;
-  * its own LiteDRAM native port, addressed as byte address − main-RAM
-    base, in 32-bit words.
+* **Gateware:** `rtl/soc/mirlo_mips.sv` instantiates `rtl/mrdp/mrdp_top.v`,
+  with:
+  * the command FIFO (`rtl/soc/mirlo_regs.sv`), on the `cmd_data` register
+    and the geometry core's CFU `PUSH`;
+  * the status registers `cmd_status`, `cmd_dropped`, `sync_count`,
+    `load_count` and `status`;
+  * its own SDRAM port (`port_mrdp`, `rtl/soc/n64_ports.sv`).
 * **Geometry core** (`lang/c/geom`, built with `GEOM_MRDP`): `geom_mrdp.h`
   and `geom_mrdp_hw.c` emit the commands. Triangle setup is
   `lang/c/mrdp/mrdp_setup.h`: integer only, with no divides (a Newton
@@ -262,7 +263,7 @@ slow may sit in front of the ALU's adder in the same cycle. That means:
 | RTL vs model | `sim/mrdp` (`tb_mrdp <capture>`) | all memory identical; random command streams from `test_mrdp_rand` |
 | setup microcode | `tools/mrdp_ucode.py test N` | N random TRI_R commands: microcode model vs the C spec |
 | geometry RTL vs host | `sim/geom_full/check_host_vs_rtl.sh` | word-identical command streams and identical frames (model linked into the bench) |
-| in the SoC | `litex/sim_mrdp.py` + `sim/soc_firmware/mrdp_main.c` | real CSR bus, FIFO, LiteDRAM port + SDRAM model: colour/depth hashes == model |
+| in the SoC | `sim/mips_soc` (`lang/c/game` programs) | the whole SoC with an SDRAM chip model: frames dumped from the scan-out's base |
 
 ## Area and timing notes (Cyclone V)
 

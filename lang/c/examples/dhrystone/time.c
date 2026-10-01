@@ -2,6 +2,7 @@
 #include <stdio.h>
 
 #include <generated/csr.h>
+#include <generated/soc.h>
 
 int gettimeofday( struct timeval *tv, void *tzvp )
 {

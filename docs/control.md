@@ -1,5 +1,7 @@
 # Control Registers
 
+The map is `tools/mirlo_regs.py`: it generates the hardware's decode (`rtl/soc/mirlo_regs.svh`) and the firmware's `lang/mips/include/generated/csr.h`, with an accessor per register (`<block>_<register>_read()` / `_write()`). The registers sit at `0xF000_0000` for all three cores. Addresses change between hardware revisions: take them from `csr.h`, never from memory.
+
 It is very important that you remain aware that register locations and offsets can change between hardware revisions, and instead you should be using the `SVD` file to derive constants to these registers.
 
 # Audio
@@ -19,13 +21,13 @@ Base address (`APF_AUDIO` block): `0xF000_0000`
 
 # Bridge
 
-The main control mechanism from the user's core (the RISC-V soft-processor) to the host hardware, PIC, and scaler FPGA. Of primary relevance to this system is the file IO processes, which are exposed here:
+The main control mechanism from the user's core (the game CPU) to the host hardware, PIC, and scaler FPGA. Of primary relevance to this system is the file IO processes, which are exposed here:
 
 **NOTE:** Write (to SD card) mechanism appears to be broken in the Pocket firmware at the moment. The functionality is exposed, but it seems to exhibit weird behavior. I recommend you avoid using it.
 
 ## File API
 
-Base address (`APF_BRIDGE` block): `0xF000_0800`
+Base address (`APF_BRIDGE` block): `0xF000_0100`
 
 For all of these operations, it is recommended to read through the [Host/Target Command Docs](https://www.analogue.co/developer/docs/host-target-commands). It details nuance and return codes that are relevant to software development.
 
@@ -36,7 +38,7 @@ For all of these operations, it is recommended to read through the [Host/Target 
 | `slot_id`             | `0x10` | RW  | 16    | The slot ID defined in `data.json` for the desired asset/slot.                                                                                                                                                                                               |
 | `data_offset`         | `0x14` | RW  | 32    | The offset from the start of the asset in the selected data slot to operate on.                                                                                                                                                                              |
 | `transfer_length`     | `0x18` | RW  | 32    | The length of data to transfer as part of this bridge operation. A length of `0xFFFFFFFF` will request the entire file (NOTE: As of Pocket firmware 1.1, this is bugged, and you just request the file size instead).                                        |
-| `ram_data_address`    | `0x1C` | RW  | 32    | The address of RISC-V RAM to be manipulated in this operation. It is either the first write address for a read request, or the first read address for a write request.                                                                                       |
+| `ram_data_address`    | `0x1C` | RW  | 32    | The address of SDRAM (`0x4xxx_xxxx`) to be manipulated in this operation. It is either the first write address for a read request, or the first read address for a write request.                                                                                       |
 | `file_size`           | `0x20` | R   | 32    | The file size on disk of the current selected asset in slot `slot_id`. Writing to this register will update the internal size representation for this file. Note that if you do this for a readonly file, you will mess up any future reads of that slot ID. |
 | `status`              | `0x24` | R   | 1     | Indicates when the bridge is currently transferring a file. 1 when transferring, 0 otherwise. Clears its value on read.                                                                                                                                      |
 | `current_address`     | `0x28` | R   | 32    | The current address the bridge is operating on. Can be used to show a progress bar/estimate time until completion.                                                                                                                                           |
@@ -68,7 +70,7 @@ See [the Analogue Docs](https://www.analogue.co/developer/docs/host-target-comma
 
 ## Interact API
 
-Base address (`APF_INTERACT` block): `0xF000_1800`
+Base address (`APF_INTERACT` block): `0xF000_0300`
 
 This interface provides IO to the Pocket's `interact.json` (`Core Settings`) API. `interact.json` entries whose `address` lies in `0x1000_0100`..`0x1000_01FF` reach the SoC; the word index is `n = (address >> 2) & 63`. Two 32-bit slots hold the values:
 
@@ -99,7 +101,7 @@ Connections to the link port and cartridge slot will be coming soon. This will p
 
 ## CSR
 
-Base address (`APF_INPUT` block): `0xF000_1000`
+Base address (`APF_INPUT` block): `0xF000_0200`
 
 Input data is directly exposed through read registers exactly how they are exposed through APF. No interrupts are available at this time; you must loop and watch for changes in inputs yourself (just like on old consoles).
 
@@ -152,85 +154,64 @@ Input data is directly exposed through read registers exactly how they are expos
 
 ## Control
 
-Base address (`CTRL` block): `0xF000_2800`
+Base address (`CTRL` block): `0xF000_0500`
 
-| Name         | Offset | Dir | Width | Description                                                           |
-| ------------ | ------ | --- | ----- | --------------------------------------------------------------------- |
-| `reset`      | `0x0`  | W   | 2     | High bit resets the CPU. Low bit resets the entire SoC.               |
-| `scratch`    | `0x4`  | RW  | 32    | Scratch register.                                                     |
-| `bus_errors` | `0x8`  | R   | 32    | Count of Wishbone bus errors (accesses that timed out or were unmapped). |
-
+| Name         | Offset | Dir | Width | Description |
+| ------------ | ------ | --- | ----- | ----------- |
+| `reset`      | `0x0`  | W   | -     | No effect: there is no soft reset (quit the core and launch it again). |
+| `scratch`    | `0x4`  | RW  | 32    | Scratch register (`0x1234_5678` after reset). |
+| `bus_errors` | `0x8`  | R   | 16    | Count of the game CPU's accesses to addresses nothing answers. |
 
 ## Timer0
 
-Provides a cycle counter timer (trigger after X cycles) and a global cycle count.
+A free-running 64-bit count of system clock cycles (`CONFIG_CLOCK_FREQUENCY`, 62.832 MHz).
 
 ### CSR
 
-Base address (`TIMER0` block): `0xF000_5000`
+Base address (`TIMER0` block): `0xF000_0800`
 
-**NOTE:** These registers marked "TODO" may have documentation in the SVD file.
+| Name            | Offset | Dir | Width | Description |
+| --------------- | ------ | --- | ----- | ----------- |
+| `uptime_latch`  | `0x0`  | W   | 1     | Write 1 to latch the count into `uptime_cycles`. |
+| `uptime_cycles` | `0x4`  | R   | 64    | The latched count: high word at `0x4`, low word at `0x8` (`timer0_uptime_cycles_read()` reads both). |
 
-| Name             | Offset | Dir | Width | Description                                                |
-| ---------------- | ------ | --- | ----- | ---------------------------------------------------------- |
-| `load`           | `0x0`  | RW  | 32    | TODO: Unknown                                              |
-| `reload`         | `0x4`  | RW  | 32    | TODO: Unknown                                              |
-| `en`             | `0x8`  | RW  | 1     | Enable the timer                                           |
-| `update_value`   | `0xC`  | W   | 1     | TODO: Unknown                                              |
-| `value`          | `0x10` | R   | 32    | TODO: Unknown                                              |
-| `ev_status`      | `0x14` | R   | 1     | TODO: Unknown                                              |
-| `ev_pending`     | `0x18` | R   | 1     | TODO: Unknown                                              |
-| `ev_enable`      | `0x1C` | RW  | 1     | TODO: Unknown                                              |
-| `uptime_latch`   | `0x20` | W   | 1     | Write 1 to latch uptime into `uptime_cycles1-2` registers. |
-| `uptime_cycles1` | `0x24` | R   | 32    | High bits of latched uptime cycle count.                   |
-| `uptime_cycles0` | `0x28` | R   | 32    | Low bits of latched uptime cycle count. |
+The game CPU also has COP0's Count/Compare timer (Count runs at half the clock); `lang/c/game/trap_arch.h` uses it for timer interrupts.
 
 ## UART
 
-The UART runs over JTAG: a USB Blaster on the Pocket's JTAG port, with `litex/jtag_uart_relay.py` on the host (see the top-level README). It is bidirectional, and the BIOS uses it to upload a new program (SFL serial boot).
+The UART runs over JTAG: a USB Blaster on the Pocket's JTAG port, with `tools/jtag/jtag_uart_relay.py` on the host (see the top-level README). It is bidirectional, and the boot ROM uses it to upload a new program (SFL serial boot).
 
 ### CSR
 
-Base address (`UART` block): `0xF000_5800` + `0x0`
+Base address (`UART` block): `0xF000_0900`
 
-| Name         | Offset | Dir | Width | Description                                 |
-| ------------ | ------ | --- | ----- | ------------------------------------------- |
-| `rxtx`       | `0x0`  | RW  | 8     | The current read/write value from the UART. |
-| `txfull`     | `0x4`  | R   | 1     | Indicates if transmit FIFO is full.         |
-| `rxempty`    | `0x8`  | R   | 1     | Indicates if receive FIFO is empty.         |
-| `ev_status`  | `0xC`  | R   | 2     | TODO: Unknown                               |
-| `ev_pending` | `0x10` | R   | 2     | TODO: Unknown                               |
-| `ev_enable`  | `0x14` | RW  | 2     | TODO: Unknown                               |
-| `txempty`    | `0x18` | R   | 1     | Indicates if transmit FIFO is empty         |
-| `rxfull`     | `0x1C` | R   | 1     | Indicates if receive FIFO is empty          |
+| Name         | Offset | Dir | Width | Description |
+| ------------ | ------ | --- | ----- | ----------- |
+| `rxtx`       | `0x0`  | RW  | 8     | Write: send a byte (dropped if `txfull`). Read: the next received byte. |
+| `txfull`     | `0x4`  | R   | 1     | The transmit FIFO is full. With no host reading, it stays full: write with a bounded wait (`uart_write()` in `lang/mips/lib/mirlo_rt.c`). |
+| `rxempty`    | `0x8`  | R   | 1     | The receive FIFO is empty. |
+| `ev_pending` | `0xC`  | RW  | 2     | Kept for LiteX's name; always 0 (the UART is polled). |
 
 ## Video
 
 ### CSR
 
-Base address (`VIDEO_FRAMEBUFFER` block): `0xF000_6000` + `0x0`
+Base address (`VIDEO_FRAMEBUFFER` block): `0xF000_0A00`
 
-| Name         | Offset | Dir | Width | Description                                                                                                           |
-| ------------ | ------ | --- | ----- | --------------------------------------------------------------------------------------------------------------------- |
-| `dma_base`   | `0x0`  | RW  | 32    | The base address of the framebuffer. Defaults to `0x40C0_0000`.                                                       |
-| `dma_length` | `0x4`  | RW  | 32    | The number of bytes read per "frame" of the framebuffer. Defaults to `0x1_F680` (268 x 240 x 2).                                      |
-| `dma_enable` | `0x8`  | RW  | 1     | Enable framebuffer DMA when set to 1. Disabling DMA can be used to decrease bus contention for faster memory access.  |
-| `dma_done`   | `0xC`  | R   | 1     | Indicates completion of a DMA when 1.                                                                                 |
-| `dma_loop`   | `0x10` | RW  | 1     | When 1, DMA will continue to loop when it completes a frame. When 0, it stops.                                        |
-| `dma_offset` | `0x14` | RW  | 32    | The current offset (in bytes) of the DMA into a frame. This can be used to restart drawing partially through a frame. |
-
-Base address (`VIDEO_FRAMEBUFFER_VTG` block): `0xF000_6800` + `0x0`
-
-| Name     | Offset | Dir | Width | Description |
-| -------- | ------ | --- | ----- | ----------- |
-| `enable` | `0x0`  | RW  | 1     | When 1, video sync signals will be produced. When 0, video generation halts. |
-| `mode`   | `0x4`  | RW  | 1     | 0: 268 x 240, 1: 320 x 240 (see `docs/resolution.md`). |
+| Name         | Offset | Dir | Width | Description |
+| ------------ | ------ | --- | ----- | ----------- |
+| `dma_base`   | `0x0`  | RW  | 32    | The framebuffer's address (RGB565). Taken at the frame boundary, so a new base never tears the frame being sent. Defaults to `0x40C0_0000`. |
+| `dma_length` | `0x4`  | RW  | 32    | Kept for LiteX's name: the mode sets the length. |
+| `dma_enable` | `0x8`  | RW  | 1     | Scan-out on. |
+| `dma_offset` | `0xC`  | R   | 32    | Reads 0. |
+| `vtg_enable` | `0x10` | RW  | 1     | Video timing on (both enables: the picture). |
+| `vtg_mode`   | `0x14` | RW  | 1     | 0: 268 x 240, 1: 320 x 240 (see `docs/resolution.md`); taken at the end of a frame. |
 
 # Video
 
 ## CSR
 
-Base address (`APF_VIDEO` block): `0xF000_2000`. Single 32 bit video register at `0x0`. Split as follows:
+Base address (`APF_VIDEO` block): `0xF000_0400`. Single 32 bit video register at `0x0`. Split as follows:
 
 | Name               | Dir | Width | Description                                                                                                                                                                                     |
 | ------------------ | --- | ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -242,18 +223,18 @@ Base address (`APF_VIDEO` block): `0xF000_2000`. Single 32 bit video register at
 
 Mirlo draws 3D with two cores and a rasterizer (`docs/geometry_core.md`, `docs/mrdp.md`):
 
-* The **game CPU** (VexRiscv-SMP, `rv32imafc`, with an FPU) runs the program and writes a display list (GDL) into SDRAM.
-* The **geometry core** (`VexRiscvGeom`, `rv32im`, no FPU) walks the GDL, transforms, lights, clips and sets up triangles. It has a private ROM (`0x2000_0000`) and RAM (`0x2000_8000`), and a vector unit attached as its CFU.
+* The **game CPU** (`mips_core`, with a single-precision FPU) runs the program and writes a display list (GDL) into SDRAM.
+* The **geometry core** (`mips_geom`, no FPU) walks the GDL, transforms, lights, clips and sets up triangles. It has a private ROM (`0x2000_0000`) and RAM (`0x2000_8000`), and a vector unit attached as its CFU.
 * **MRDP**, an N64-style rasterizer, receives the geometry core's commands and draws into the framebuffers.
 
 The two cores hand off frames through the **mailbox**.
 
-> CSR base addresses below shift between builds -- derive them from
-> `litex/pocket.svd` / the generated `csr.h`, never hardcode.
+> Register addresses shift between builds -- derive them from the
+> generated `csr.h` (`tools/mirlo_regs.py`), never hardcode.
 
 ## MRDP
 
-Base address (`MRDP` block): `0xF000_4000`. The command format is documented in `docs/mrdp.md`. Once `frame_init()` has run, only the geometry core writes commands.
+Base address (`MRDP` block): `0xF000_0700`. The command format is documented in `docs/mrdp.md`. Once `frame_init()` has run, only the geometry core writes commands.
 
 | Name          | Offset | Dir | Width | Description |
 | ------------- | ------ | --- | ----- | ----------- |
@@ -266,9 +247,10 @@ Base address (`MRDP` block): `0xF000_4000`. The command format is documented in 
 
 ## Mailbox
 
-Base address (`MAILBOX` block): `0xF000_3800`. Bidirectional doorbell + 32-bit message word; each
-direction raises a level interrupt on the receiver (`geom` -> geometry core
-`externalInterruptArray[0]`; `game` side is currently poll-only).
+Base address (`MAILBOX` block): `0xF000_0600`. Bidirectional doorbell + 32-bit message word; each
+direction raises a level interrupt on the receiver (`geom` -> the geometry
+core's interrupt input; `game` -> the game CPU's Cause.IP2, which the
+software leaves masked: it polls).
 
 | Name           | Dir | Width | Description |
 | -------------- | --- | ----- | ---------- |

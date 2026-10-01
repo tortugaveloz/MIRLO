@@ -1,5 +1,5 @@
 // Mirlo-N64's JTAG UART: LiteX's JTAG PHY (jtag_uart_bridge.v, the host side
-// unchanged: litex/jtag_uart_relay.py) with a 512-byte TX FIFO and a 16-byte
+// unchanged: tools/jtag/jtag_uart_relay.py) with a 512-byte TX FIFO and a 16-byte
 // RX FIFO (RX not built: nothing reads it). Bytes go out from the registers (UART_RXTX: the geom and audio
 // firmware), the boot ROM (the system window), and a dumper in hardware:
 // every DUMP_CYCLES it sends the debug words (what the OSD shows) as one

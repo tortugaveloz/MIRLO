@@ -8,7 +8,7 @@
 # Needs meson and ninja (the LiteX venv has them).
 include $(dir $(lastword $(MAKEFILE_LIST)))mips.mk
 VARIANT     ?= game
-VENDOR      ?= $(MIPS_ROOT)../../litex/vendor
+VENDOR      ?= $(MIPS_ROOT)../../vendor
 PICOLIBC_SRC ?= $(VENDOR)/pythondata-software-picolibc/pythondata_software_picolibc/data
 CRT_DIR     ?= $(VENDOR)/pythondata-software-compiler_rt/pythondata_software_compiler_rt/data/lib/builtins
 MESON       ?= meson

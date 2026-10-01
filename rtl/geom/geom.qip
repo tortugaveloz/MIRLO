@@ -1,6 +1,0 @@
-# Geometry core: standalone VexRiscv (rv32im, "Lite" variant), renamed from the
-# stock pythondata-cpu-vexriscv netlist's `VexRiscv`/`InstructionCache` modules
-# to `VexRiscvGeom`/`VexRiscvGeomICache` so it does not clash with the
-# VexRiscv-SMP cluster's internal `VexRiscv` module.
-set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) "VexRiscvGeom.v"]
-set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) "GeomTcmRam.v"]

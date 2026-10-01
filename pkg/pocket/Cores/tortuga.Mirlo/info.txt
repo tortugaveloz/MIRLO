@@ -1,4 +1,4 @@
-Mirlo: a LiteX RISC-V computer for the Analogue Pocket, with MRDP
+Mirlo: a MIPS computer for the Analogue Pocket, with MRDP (experimental)
 
-Based on openfpga-litex by agg23. Built with LiteX,
-VexRiscv and MRDP (an N64-style rasterizer).
+Three MIPS cores (game CPU, geometry, audio) and MRDP (an N64-style
+rasterizer). Based on openfpga-litex by agg23.

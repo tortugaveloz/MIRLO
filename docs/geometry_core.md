@@ -1,6 +1,6 @@
 # The geometry core
 
-The geometry core is Mirlo's second RISC-V core. It plays the role of the
+The geometry core is Mirlo's second MIPS core. It plays the role of the
 N64's RSP:
 * it walks the display list (GDL) the game CPU writes;
 * it keeps the matrix stack, and transforms, lights, fogs and clips the
@@ -10,15 +10,14 @@ N64's RSP:
 
 ## The core
 
-* **CPU:** `VexRiscvGeom` (`rtl/geom/VexRiscvGeom.v`), a standalone VexRiscv,
-  `rv32im`, with **no FPU**. It is not a second hart of the SMP cluster; that
-  would bring coherent 64-bit L1s and a wide DRAM port the device cannot
-  spare.
-* **ROM** at `0x2000_0000`, 32 KiB, with no I-cache: the core fetches
-  straight from it.
-  * **ROM A** (the first 16 KiB) is also on the data bus.
-  * **ROM B** (`0x2000_4000`) is **fetch only**. `geom.ld`'s `.text_b` may
-    hold code only: a load from ROM B returns ROM A's word.
+* **CPU:** `mips_geom` (`rtl/mips/mips_geom.sv`): `mips_lite` (MIPS32's
+  integer subset, with a divider and clz) plus a write-through data cache,
+  with **no FPU**. `rtl/soc/n64_geom.sv` puts it together with its memories
+  and its CFU.
+* **ROM**, with no I-cache: the core fetches straight from it.
+  * **ROM A** (`0x2000_0000`, 16 KiB) is also on the data bus.
+  * **ROM B** (`0x2001_0000`, 64 KiB) is **fetch only**. `geom_mips.ld`'s
+    `.text_b` may hold code only: a load from ROM B returns nothing useful.
     `sim/geom_full` warns about it.
 * **RAM** at `0x2000_8000`, 16 KiB: the core's tightly coupled data memory.
   Its second port is on the SoC bus, so the game CPU can read the geometry
@@ -28,20 +27,25 @@ N64's RSP:
 
 ## The firmware is part of the bitstream
 
-`lang/c/geom/build/geom.bin` is baked into the ROM at synthesis
-(`litex/analogue_pocket.py`, `add_geometry_subsystem`). It also has the CSR
-addresses compiled in. So:
+`lang/c/geom/build/geom.bin` is baked into the ROMs at synthesis
+(`tools/mips_inits.py` writes `rtl/soc/init/geom_rom_{a,b}.hex`). It also has
+the register addresses compiled in. So:
 
-* A change under `lang/c/geom` needs a LiteX rebuild and a Quartus compile.
-* Adding or removing a CSR peripheral moves the CSR map, so geom.bin has to
-  be rebuilt against it.
+* A change under `lang/c/geom` needs a Quartus compile.
+* A change to the register map (`tools/mirlo_regs.py`) needs geom.bin rebuilt
+  against it.
 
 The build order is:
-1. `make` in `litex`;
+1. `python3 tools/mirlo_regs.py`;
 2. `make clean && make` in `lang/c/geom`;
-3. `make` in `litex` again;
-4. check that `litex_geom_rom.init` matches geom.bin;
-5. run Quartus.
+3. `python3 tools/mips_inits.py`;
+4. run Quartus.
+
+A firmware-only change can skip the fit: rewrite the Quartus db's
+`*ram0_n64_geom*.hdl.mif` / `*ram1_n64_geom*.hdl.mif` (descending addresses,
+binary) from the new hex files, then `quartus_cdb --update_mif` and
+`quartus_asm`. A plain `--update_mif` re-reads the db's copies, not the hex
+files, and keeps the old image.
 
 `lang/c/geom`'s Makefile does not track header dependencies: `make clean &&
 make` after editing a header.
@@ -65,8 +69,9 @@ reference and the hardware round identically.
 
 ## The vector unit (CFU)
 
-The core's only arithmetic hardware beyond `rv32im` sits in its CFU (custom
-function unit), reached with `custom-0` instructions (`lang/c/geom/geom_vpar.h`).
+The core's only arithmetic hardware beyond its integer unit sits in its CFU
+(custom function unit), reached with MIPS opcode `0x1F` (`lang/c/mips/mips_cfu.h`,
+`lang/c/geom/geom_vpar.h`).
 It is not on any bus; the game CPU cannot reach it.
 
 * **`rtl/vpu/Vpu4DFixed.v`:** four multiply-accumulate lanes, one DSP block
@@ -107,4 +112,4 @@ Three multipliers with FSM-steered operands do the work of thirteen.
 |---|---|
 | host tests | `make hosttest` in `lang/c/geom` |
 | vector unit | `sim/vpu`: `make -f Makefile.fixed run`, `make -f Makefile.setup run` |
-| whole frames on the RTL | `sim/geom_full/check_host_vs_rtl.sh`: the real geom.bin on the real VexRiscvGeom + CFU must produce a command stream word-identical to the host build. Run it before any geometry-core Quartus build. `BUS_WAIT=30` adds SoC-bus latency. `PCPROF=` gives a per-function cycle profile. |
+| whole frames on the RTL | `sim/geom_full/check_host_vs_rtl.sh`: the real geom.bin on the real mips_geom + CFU must produce a command stream word-identical to the host build. Run it before any geometry-core Quartus build. `BUS_WAIT=30` adds SoC-bus latency. `PCPROF=` gives a per-function cycle profile. |

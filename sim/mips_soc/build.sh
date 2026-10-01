@@ -13,8 +13,8 @@ sdr)
         "$HERE/sdr_test_top.sv" "$HERE/tb_sdr.cpp" -o tb_sdr > "$HERE/obj_sdr.log" 2>&1 || { tail -30 "$HERE/obj_sdr.log"; exit 1; }
     echo "OK -> $HERE/obj_sdr/tb_sdr" ;;
 soc)
-    # the Quartus project's macros (projects/openFPGA-RISC-V_pocket.qsf, MIRLO_MIPS)
-    DEFS="+define+MIRLO_MIPS=1 +define+GEOM_MIPS=1 +define+AUDIO_MIPS=1 +define+SU_NO_EDGE=1 +define+SU_NO_BLEND=1 +define+MRDP_NO_2CYCLE=1 +define+MRDP_NO_TEXRECT=1 +define+MRDP_NO_PRIMENV=1 ${EXTRA_DEFS:-}"
+    # the Quartus project's macros (projects/mirlo.qsf, MIRLO_MIPS)
+    DEFS="+define+SU_NO_EDGE=1 +define+SU_NO_BLEND=1 +define+MRDP_NO_2CYCLE=1 +define+MRDP_NO_TEXRECT=1 +define+MRDP_NO_PRIMENV=1 ${EXTRA_DEFS:-}"
     S="$R/rtl/soc"
     "$VL" --cc --exe --build -j 8 -O3 ${VL_THREADS:+--threads $VL_THREADS} -Wno-fatal -Wno-lint -Wno-style -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-MULTIDRIVEN \
         --x-assign fast --x-initial fast -Mdir "${OBJ:-$HERE/obj_soc}" --top-module soc_sim_top $DEFS -I"$S" -I"$R/rtl/vpu" \

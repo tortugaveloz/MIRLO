@@ -1,6 +1,6 @@
 // The JTAG UART's PHY: LiteX's AlteraJTAG + JTAGPHY (litex/soc/cores/jtag.py), generated
 // by Migen as a standalone module, so the host side is the same as Mirlo's:
-// openocd -f litex/openocd_rpc.cfg + litex/jtag_uart_relay.py. A byte stream each way.
+// openocd -f tools/jtag/openocd_rpc.cfg + tools/jtag/jtag_uart_relay.py. A byte stream each way.
 /* Machine-generated using Migen */
 module jtag_uart_bridge(
 	input clk,

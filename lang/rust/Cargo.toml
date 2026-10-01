@@ -1,8 +1,0 @@
-[workspace]
-resolver = "2"
-members = [
-    "examples/minibreak",
-    "examples/minimal",
-    "crates/litex-openfpga",
-    "crates/litex-pac"
-]

@@ -1,8 +1,8 @@
 # Language Instructions/Examples
 
-Each language will need to reference the [Control Registers documentation](/docs/control.md). Some platforms, such as Rust, have statically generated types to access these registers.
+Programs for Mirlo are written in C for its MIPS cores. The registers are
+documented in [docs/control.md](/docs/control.md); `lang/mips` holds the SDK's
+base (toolchain flags, C library, runtime, linker files).
 
-* [C/C++](./c/)
-* [Rust](./rust/)
-
-If you would like to contribute instructions or examples for a language, feel free to open a PR.
+* [C](./c/)
+* [The MIPS SDK](./mips/mips.mk)

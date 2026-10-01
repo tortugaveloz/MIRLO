@@ -1,6 +1,7 @@
 import os, sys, subprocess, bisect, collections
 elf, prof = sys.argv[1], sys.argv[2]
 syms = []
+# CROSS=<prefix> picks the binutils (riscv-none-elf- by default; mips-linux-gnu- for a MIPS elf)
 for l in subprocess.run([os.environ.get("CROSS", "riscv-none-elf-") + "nm", "-n", "-S", elf], capture_output=True, text=True).stdout.splitlines():
     p = l.split()
     if len(p) == 4 and p[2] in "tTwW": syms.append((int(p[0],16), int(p[1],16), p[3]))

@@ -1,6 +1,0 @@
-set_global_assignment -name QIP_FILE             [file join $::quartus(qip_path) "litex/litex.qip"]
-set_global_assignment -name QIP_FILE             [file join $::quartus(qip_path) "mrdp.qip"]
-set_global_assignment -name QIP_FILE             [file join $::quartus(qip_path) "geom/geom.qip"]
-set_global_assignment -name QIP_FILE             [file join $::quartus(qip_path) "vpu/vpu.qip"]
-set_global_assignment -name QIP_FILE             [file join $::quartus(qip_path) "audio/audio.qip"]
-set_global_assignment -name SYSTEMVERILOG_FILE   [file join $::quartus(qip_path) "video/rgb565_to_rgb888.sv"]

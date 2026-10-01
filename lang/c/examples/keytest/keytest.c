@@ -1,7 +1,7 @@
 /* Prints the Pocket's controller key/trigger words over the UART whenever
  * one changes: which bit a Controls (input.json) entry really reaches the
  * core on, e.g. after the user remaps it. Upload over JTAG
- * (litex/jtag_program_and_run.sh). */
+ * (tools/jtag/jtag_program_and_run.sh). */
 #include <stdio.h>
 #include <stdint.h>
 

@@ -15,7 +15,7 @@
 
 #include "audio_load.h"
 #ifndef AUDIO_FW_HEADER
-#define AUDIO_FW_HEADER "../audio/build/main/audio_fw.h"   /* CPU=mips: build/mips/main (Makefile) */
+#define AUDIO_FW_HEADER "../audio/build/main/audio_fw.h"
 #endif
 #include AUDIO_FW_HEADER
 

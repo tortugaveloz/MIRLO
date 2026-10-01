@@ -11,13 +11,14 @@
 #  - the geom and audio cores, mips_lite: MIPS32's integer subset (no FPU,
 #    no madd; clz on the geom core), little-endian, soft-float.
 # A GCC for MIPS (any: the flags set the byte order and the ABI) and its
-# binutils: MIPS_CC / MIPS_BIN. The default is a mips-linux-gnu GCC 13.
+# binutils: MIPS_CC / MIPS_BIN (a path prefix or just the tools' prefix on
+# PATH). The default: Ubuntu's gcc-mips-linux-gnu / binutils-mips-linux-gnu.
 MIPS_ROOT    := $(dir $(lastword $(MAKEFILE_LIST)))
-MIPS_CC      ?= $(HOME)/local/mipsgcc/usr/bin/mips-linux-gnu-gcc-13
-MIPS_BIN     ?= $(HOME)/local/mips-bin/mips-linux-gnu-
+MIPS_CC      ?= mips-linux-gnu-gcc
+MIPS_BIN     ?= mips-linux-gnu-
 # gcc finds as/ld by their plain names in a -B directory: links to MIPS_BIN's
 MIPS_TOOLS   := $(abspath $(MIPS_ROOT))/build/bin
-$(shell mkdir -p $(MIPS_TOOLS) && for t in as ld ar nm objcopy strip; do ln -sf $(MIPS_BIN)$$t $(MIPS_TOOLS)/$$t; done)
+$(shell mkdir -p $(MIPS_TOOLS) && for t in as ld ar nm objcopy strip; do ln -sf "$$(command -v $(MIPS_BIN)$$t)" $(MIPS_TOOLS)/$$t; done)
 MIPS_GCC      = $(MIPS_CC) -B$(MIPS_TOOLS)/
 MIPS_AR       = $(MIPS_BIN)ar
 MIPS_OBJCOPY  = $(MIPS_BIN)objcopy -I elf32-tradlittlemips

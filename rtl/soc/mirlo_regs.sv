@@ -1,6 +1,6 @@
 // Mirlo's registers on the MIPS SoC (tools/mirlo_regs.py: the map, and the
-// firmware's csr.h), in place of LiteX's CSR peripherals (litex/csr.py,
-// litex/mailbox.py, litex/mrdp.py, LiteX's timer/UART/video DMA) and with
+// firmware's csr.h), in place of the RISC-V Mirlo's LiteX CSR peripherals
+// (its APF blocks, mailbox, MRDP wrapper, timer, UART, video DMA) and with
 // their behaviour:
 //   APF_AUDIO     the Pocket's audio FIFO (core_top's): samples, playback, flush
 //   APF_BRIDGE    the Pocket's target commands (core_top's core_bridge_cmd);
@@ -124,7 +124,7 @@ end
 
 // ---- APF interact (slot 0: A, B, Z, Start, L, R at 5 bits each; slot 1:
 // C-up/down/left/right at 5 bits, stick [21:20], D-pad [23:22], Show FPS
-// [24], Start = Select+Start [25]) -- as analogue_pocket.py's fields
+// [24], Start = Select+Start [25]) -- docs/control.md, Interact API
 logic [31:0] ia0, ia1;
 logic        ia_ch0, ia_ch1;
 always_ff @(posedge clk) begin

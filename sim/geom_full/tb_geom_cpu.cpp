@@ -27,7 +27,7 @@
 //                  per address -- tools/symprof.py folds it per function.
 //   CFUTRACE=1     print the first 400 CFU bus transactions (function_id as
 //                  the CFU actually receives it, operands, results).
-static std::map<uint32_t, uint64_t> g_pchist; static bool g_prof, g_cfutrace;
+static std::map<uint32_t, uint64_t> g_pchist, g_rethist; static bool g_prof, g_cfutrace, g_retprof;   // RETPROF=file: retired instructions by PC
 #include <cstdio>
 #include <cstdint>
 #include <cstring>
@@ -41,6 +41,9 @@ static vluint64_t g_cycle = 0;
 // ---- address map (byte addresses) ----------------------------------------
 #ifndef TB_ROM_SIZE
 #define TB_ROM_SIZE 0x8000u   /* litex/analogue_pocket.py GEOM_ROM_SIZE */
+#endif
+#ifndef TB_ROM_B
+#define TB_ROM_B 0x4000u
 #endif
 #ifndef TB_RAM_BASE
 #define TB_RAM_BASE 0x20008000u
@@ -75,6 +78,19 @@ constexpr uint32_t MRDP_STATUS     = CSR_BASE + TB_MRDP_OFS + 0x14u;
 constexpr uint32_t TB_FB = 0x40C00000u, TB_ZB = 0x40D01000u;
 static mrdp_t s_mrdp;
 
+#ifdef TB_N64
+// Mirlo-N64 (lang/c/geom/main_n64.c): the RCP block's CSRs (litex/n64.py).
+// usage: tb_geom_cpu <geom.bin> <dump dir>  -- a graphics task the model
+// dumped (sim/n64 N64_GFX_DUMP=K:dir): its RDRAM, DMEM (the OSTask) and
+// the RDRAM after it. The task runs on the real geom core; MRDP is the C
+// model; the RDRAM after it must match the model's byte for byte.
+constexpr uint32_t N64_GFX_PENDING = CSR_BASE + TB_N64_OFS + 0x00u;
+constexpr uint32_t N64_TASK_DONE   = CSR_BASE + TB_N64_OFS + 0x08u;
+constexpr uint32_t N64_SVC_ADDR    = CSR_BASE + TB_N64_OFS + 0x0cu;
+constexpr uint32_t N64_SVC_DATA    = CSR_BASE + TB_N64_OFS + 0x10u;
+constexpr uint32_t N64_SVC_BUSY    = CSR_BASE + TB_N64_OFS + 0x14u;
+static uint32_t s_dmem[1024], s_svc_data, s_gfx_pending, s_task_done;
+#endif
 static std::vector<uint8_t> s_rom(GEOM_ROM_SIZE, 0);
 static std::vector<uint8_t> s_ram(GEOM_RAM_SIZE, 0);
 static uint32_t s_gdl_base = 0x41000000u;
@@ -179,20 +195,20 @@ static void wb_access(bool cyc, bool stb, bool we, uint32_t adr_word, uint32_t d
         bw[b] = 0;
     }
 
-    if (in_range(addr, GEOM_ROM_BASE, GEOM_ROM_SIZE)) {
-        uint32_t off = addr - GEOM_ROM_BASE;
-        // ROM B (0x4000 on) is on the core's iBus only (litex/analogue_pocket.py)
-        if (busname[0] == 'd' && off >= 0x4000u) {
-            static int nb; if (nb++ < 5) fprintf(stderr, "  [WARN] dBus read of fetch-only ROM B at 0x%08X\n", addr);
-        }
-        if (we) { /* ROM: ignore writes (shouldn't happen) */ }
-        else memcpy(&dat_r, &s_rom[off], 4);
-        ack = 1; return;
-    }
     if (in_range(addr, GEOM_RAM_BASE, GEOM_RAM_SIZE)) {
         uint32_t off = addr - GEOM_RAM_BASE;
         if (we) sel_write(&s_ram[off], dat_w, sel);
         else memcpy(&dat_r, &s_ram[off], 4);
+        ack = 1; return;
+    }
+    if (in_range(addr, GEOM_ROM_BASE, GEOM_ROM_SIZE)) {
+        uint32_t off = addr - GEOM_ROM_BASE;
+        // ROM B (0x4000 on; N64: 0x10000 on) is on the core's iBus only (litex/analogue_pocket.py)
+        if (busname[0] == 'd' && off >= TB_ROM_B) {
+            static int nb; if (nb++ < 5) fprintf(stderr, "  [WARN] dBus read of fetch-only ROM B at 0x%08X\n", addr);
+        }
+        if (we) { /* ROM: ignore writes (shouldn't happen) */ }
+        else memcpy(&dat_r, &s_rom[off], 4);
         ack = 1; return;
     }
     if (in_range(addr, s_gdl_base, (uint32_t)s_gdl.size())) {
@@ -211,6 +227,13 @@ static void wb_access(bool cyc, bool stb, bool we, uint32_t adr_word, uint32_t d
         else memcpy(&dat_r, &s_sdram[off], 4);
         ack = 1; return;
     }
+#ifdef TB_N64
+    if (addr == N64_GFX_PENDING) { if (!we) dat_r = s_gfx_pending; ack = 1; return; }
+    if (addr == N64_TASK_DONE)   { if (we) { s_task_done = dat_w; s_gfx_pending = 0; if (dat_w & 1u) s_geom_kicked_done = true; } ack = 1; return; }   /* (a task: its SP end; the DP end follows) */
+    if (addr == N64_SVC_ADDR)    { if (we) s_svc_data = s_dmem[dat_w & 1023u]; ack = 1; return; }
+    if (addr == N64_SVC_DATA)    { if (!we) dat_r = s_svc_data; ack = 1; return; }
+    if (addr == N64_SVC_BUSY)    { if (!we) dat_r = 0; ack = 1; return; }
+#endif
     if (addr == MB_STATUS)   { if (!we) dat_r = s_mb_status; ack = 1; return; }
     if (addr == MB_GAME_MSG) { if (!we) dat_r = s_mb_game_msg; ack = 1; return; }
     if (addr == MB_GEOM_ACK) { if (we && (dat_w & 1)) s_mb_status &= ~1u; ack = 1; return; }
@@ -254,6 +277,18 @@ static void wb_access(bool cyc, bool stb, bool we, uint32_t adr_word, uint32_t d
 }
 
 static uint32_t s_trace_lo = 0xFFFFFFFFu, s_trace_hi = 0;
+
+// geom_cpu_top's own signals (Verilator flattens it into the root when the
+// core is mips_geom)
+#ifdef GEOM_MIPS
+#define TOPV(x) (dut->rootp->geom_cpu_top__DOT__##x)
+#else
+#define TOPV(x) (dut->rootp->vlSymsp->TOP__geom_cpu_top.x)
+#endif
+
+// RETPROF: control transfers taken (a retired pc that does not follow the last one)
+static uint64_t g_taken;
+static void ret_flow(uint32_t pc) { static uint32_t last; if (pc != last + 4 && pc != last + 2) g_taken++; last = pc; }
 
 static void tick() {
 #ifdef GEOM_IBUS_SIMPLE
@@ -316,9 +351,11 @@ static void tick() {
     }
 #endif
 #ifdef GEOM_DTCM
+#ifndef GEOM_MIPS
     if (dut->dTcm_enable && dut->dTcm_write_enable && dut->rootp->vlSymsp->TOP__geom_cpu_top__cpu.execute_arbitration_isFlushed) {
         static int nf; if (nf++ < 5) fprintf(stderr, "  [TCM] store while execute is flushed, cyc=%llu addr=%08x\n", (unsigned long long)g_cycle, (unsigned)dut->dTcm_address);
     }
+#endif
     if (dut->dTcm_enable) {
         uint32_t off = ((uint32_t)dut->dTcm_address - GEOM_RAM_BASE) & (GEOM_RAM_SIZE - 1) & ~3u;
         memcpy(&tcm_q, &s_ram[off], 4);
@@ -327,11 +364,20 @@ static void tick() {
     }
 #endif
     dut->clk = 1; dut->eval();
-    { static int ntr = 0; auto &T = dut->rootp->vlSymsp->TOP__geom_cpu_top;
+    { static int ntr = 0;
       if (g_cfutrace && ntr < 400) {
-        if (T.cfu_cmd_valid && T.cfu_cmd_ready) { printf("  CFU cmd fid=%03x in0=%08x in1=%08x cyc=%llu\n", T.cfu_cmd_fid, T.cfu_cmd_in0, T.cfu_cmd_in1, (unsigned long long)g_cycle); ntr++; }
-        if (T.cfu_rsp_valid && T.cfu_rsp_ready) { printf("  CFU rsp out=%08x cyc=%llu\n", T.cfu_rsp_out0, (unsigned long long)g_cycle); ntr++; } } }
+        if (TOPV(cfu_cmd_valid) && TOPV(cfu_cmd_ready)) { printf("  CFU cmd fid=%03x in0=%08x in1=%08x cyc=%llu\n", TOPV(cfu_cmd_fid), TOPV(cfu_cmd_in0), TOPV(cfu_cmd_in1), (unsigned long long)g_cycle); ntr++; }
+        if (TOPV(cfu_rsp_valid) && TOPV(cfu_rsp_ready)) { printf("  CFU rsp out=%08x cyc=%llu\n", TOPV(cfu_rsp_out0), (unsigned long long)g_cycle); ntr++; } } }
+#ifdef GEOM_MIPS
+    if (g_prof) g_pchist[TOPV(prof_pc)]++;
+    if (g_retprof && TOPV(prof_ret)) { g_rethist[TOPV(prof_pc)]++; ret_flow(TOPV(prof_pc)); }
+#else
     if (g_prof) g_pchist[dut->rootp->vlSymsp->TOP__geom_cpu_top__cpu.memory_to_writeBack_PC]++;
+    if (g_retprof && dut->rootp->vlSymsp->TOP__geom_cpu_top__cpu.writeBack_arbitration_isFiring) {
+        g_rethist[dut->rootp->vlSymsp->TOP__geom_cpu_top__cpu.memory_to_writeBack_PC]++;
+        ret_flow(dut->rootp->vlSymsp->TOP__geom_cpu_top__cpu.memory_to_writeBack_PC);
+    }
+#endif
     g_cycle++;
 }
 
@@ -341,6 +387,7 @@ int main(int argc, char **argv) {
     mrdp_init(&s_mrdp, nullptr, tb_rd16, tb_wr16);
     Verilated::commandArgs(argc, argv);
     g_prof = getenv("PCPROF") != nullptr;
+    g_retprof = getenv("RETPROF") != nullptr;
     g_cfutrace = getenv("CFUTRACE") != nullptr;
     if (const char *w = getenv("SDRAM_WAIT")) s_sdram_wait = atoi(w);
     if (const char *w = getenv("BUS_WAIT")) s_bus_wait = atoi(w);
@@ -362,6 +409,22 @@ int main(int argc, char **argv) {
     fclose(f);
     printf("loaded %zu bytes of geom firmware into ROM @0x%08X\n", n, GEOM_ROM_BASE);
 
+#ifdef TB_N64
+    std::vector<uint8_t> post(8u << 20);
+    {
+        std::string d = argv[2];
+        auto load = [&](const char *name, void *p, size_t n) {
+            FILE *lf = fopen((d + "/" + name).c_str(), "rb");
+            if (!lf || fread(p, 1, n, lf) != n) { fprintf(stderr, "cannot read %s/%s\n", d.c_str(), name); exit(2); }
+            fclose(lf);
+        };
+        load("rdram_pre.bin", s_sdram.data(), 8u << 20);
+        load("dmem.bin", s_dmem, sizeof s_dmem);
+        load("rdram_post.bin", post.data(), post.size());
+        printf("loaded the task: RDRAM, DMEM (OSTask data_ptr %08x)\n", s_dmem[(0xFC0 + 48) / 4]);
+    }
+    long gdl_len = 0;
+#else
     f = fopen(argv[2], "rb");
     if (!f) { fprintf(stderr, "cannot open %s\n", argv[2]); return 2; }
     fseek(f, 0, SEEK_END); long gdl_len = ftell(f); fseek(f, 0, SEEK_SET);
@@ -370,6 +433,7 @@ int main(int argc, char **argv) {
     fclose(f);
     if (argc > 3) s_gdl_base = (uint32_t)strtoul(argv[3], nullptr, 16);
     printf("loaded %ld bytes of GDL @0x%08X (padded buffer %zu bytes)\n", gdl_len, s_gdl_base, s_gdl.size());
+#endif
 
     dut = new Vgeom_cpu_top;
     dut->reset = 1;
@@ -393,23 +457,30 @@ int main(int argc, char **argv) {
         // (0xB0000040, main.c's HB right before mbox_wait_kick()), ring it --
         // exactly what the game CPU's frame_submit()/geom kick would do.
         if (!kicked && last_heartbeat == 0xB0000040u) {
+#ifdef TB_N64
+            printf("  --> graphics task pending\n");
+            s_gfx_pending = 1;
+#else
             printf("  --> ringing mailbox doorbell with dl_base=0x%08X\n", s_gdl_base);
             s_mb_game_msg = s_gdl_base;
             s_mb_status |= 1u; // geom_pending
+#endif
             kicked = true;
             kick_cycle = g_cycle;
             memset(s_bc, 0, sizeof s_bc);
-            if (getenv("PCPROF_LAST")) g_pchist.clear();   // profile only the walk that ends last
+            if (getenv("PCPROF_LAST")) { g_pchist.clear(); g_rethist.clear(); g_taken = 0; }   // profile only the walk that ends last
             if (!s_sdram_live) {   // what the game CPU's frame_init() writes: GEOM_CFG = 0
                 s_sdram_live = true;
                 memset(&s_sdram[0x41300000u - SDRAM_BASE], 0, 32);
             }
             s_cmd_stream.clear();
+#ifndef TB_N64
             {   // the frame's clears, as the game CPU's GDL / hostreplay put them
                 uint32_t w[MRDP_FRAME_CLEAR_WORDS];
                 unsigned nw = mrdp_frame_clear(w, TB_FB, TB_ZB, 268, 240, 0x404040u);
                 for (unsigned i = 0; i < nw; i++) mrdp_push(&s_mrdp, w[i]);
             }
+#endif
         }
         if (s_geom_kicked_done) {
             printf("  run %d: %llu cycles kick->done\n", run + 1, (unsigned long long)(g_cycle - kick_cycle));
@@ -448,6 +519,31 @@ int main(int argc, char **argv) {
         FILE *ff = fopen(fbp, "wb");
         if (ff) { fwrite(&s_sdram[TB_FB - SDRAM_BASE], 2, 268 * 240, ff); fclose(ff); }
     }
+#ifdef TB_N64
+    {
+        size_t nd = 0, first = 0;
+        for (size_t i = 0; i < post.size(); i++)
+            if (s_sdram[i] != post[i]) { if (!nd) first = i; nd++; }
+        printf("task_done = %u; RDRAM vs the model after the task: %zu bytes differ", s_task_done, nd);
+        if (nd) printf(" (first at %06zx: rtl %02x model %02x)", first, s_sdram[first], post[first]);
+        printf("\n%s\n", nd == 0 && (s_task_done == 3 || s_task_done == 5) ? "PASS" : "FAIL");
+        if (const char *o = getenv("RDRAM_OUT")) { FILE *of = fopen(o, "wb"); fwrite(s_sdram.data(), 1, 8u << 20, of); fclose(of); }
+        if (const char *o = getenv("CMD_OUT")) { FILE *of = fopen(o, "wb"); fwrite(s_cmd_stream.data(), 4, s_cmd_stream.size(), of); fclose(of); }
+        if (g_prof) { FILE *pf = fopen(getenv("PCPROF"), "w"); for (auto &kv : g_pchist) fprintf(pf, "%08x %llu\n", kv.first, (unsigned long long)kv.second); fclose(pf); }
+        if (g_retprof) printf("RETPROF: %llu control transfers taken\n", (unsigned long long)g_taken);
+        if (g_retprof) { FILE *pf = fopen(getenv("RETPROF"), "w"); for (auto &kv : g_rethist) fprintf(pf, "%08x %llu\n", kv.first, (unsigned long long)kv.second); fclose(pf); }
+        if (const char *wl = getenv("TB_WATCH")) {      /* hex RAM addresses (geom.map), comma-separated */
+            for (const char *q = wl; *q; ) {
+                uint32_t a = (uint32_t)strtoul(q, (char **)&q, 16), v = 0;
+                if (a >= GEOM_RAM_BASE && a < GEOM_RAM_BASE + GEOM_RAM_SIZE) memcpy(&v, &s_ram[a - GEOM_RAM_BASE], 4);
+                printf("watch %08x = %u (0x%08x)\n", a, v, v);
+                if (*q == ',') q++;
+            }
+        }
+        delete dut;
+        return nd == 0 && (s_task_done == 3 || s_task_done == 5) ? 0 : 1;   /* (5: the geom core's SP end, 2026-09-29; MRDP's model is done by then) */
+    }
+#endif
     FILE *ramout = fopen("geom_ram_dump.bin", "wb");
     if (ramout) { fwrite(s_ram.data(), 1, s_ram.size(), ramout); fclose(ramout); }
 

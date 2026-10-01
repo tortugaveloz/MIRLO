@@ -1,4 +1,4 @@
-/* Linker script for the geometry-core firmware on MIPS (make CPU=mips;
+/* Linker script for the geometry-core firmware (
  * rtl/mips/mips_geom.sv, rtl/soc/n64_geom.sv): ROM A 16 KiB
  * at 0x2000_0000 on both buses (the start code, everything read as data,
  * the small objects and the soft-float), the RAM 16 KiB at 0x2000_8000,

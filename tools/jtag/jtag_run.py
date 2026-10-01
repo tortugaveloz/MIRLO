@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Non-interactive JTAG firmware run: upload a .bin through the LiteX BIOS's
-SFL serial boot over the JTAG UART relay, then log the program's output.
+"""Non-interactive JTAG firmware run: upload a .bin through the boot ROM's
+SFL serial boot (LiteX's protocol) over the JTAG UART relay, then log the
+program's output.
 
     jtag_run.py <relay-pty> <file.bin> [--seconds N] [--until TEXT] [--log F]
 
@@ -9,9 +10,9 @@ Meant for scripted hardware tests, where litex_term's interactive console
 LiteXTerm class as litex_term.py for the upload itself, so its fixes for the
 slow, lossy transport (see jtag_uart_relay.py) apply unchanged.
 
-Unlike jtag_boot.sh it does not wait for someone to reset the core: if the
-BIOS has already gone past its serial-boot attempt and sits at the `litex>`
-prompt, this types `serialboot` for it. Start openocd (openocd_rpc.cfg) and
+Mirlo's boot ROM keeps asking for a program until one comes (the RISC-V
+Mirlo's LiteX BIOS gave up after one try and sat at its `litex>` prompt;
+for that one this types `serialboot`). Start openocd (openocd_rpc.cfg) and
 jtag_uart_relay.py first; the relay prints its pty on its first line.
 """
 import argparse
@@ -20,11 +21,8 @@ import sys
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, HERE)
-import vendor  # noqa: F401,E402  (puts the vendored LiteX on sys.path)
-
 ns = {"__name__": "litex_term_lib"}
-exec(open(os.path.join(HERE, "vendor", "litex", "litex", "tools", "litex_term.py")).read(), ns)
+exec(open(os.path.join(HERE, "litex_term.py")).read(), ns)
 
 
 class _NoConsole:

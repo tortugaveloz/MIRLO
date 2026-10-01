@@ -5,8 +5,8 @@
 # the SDRAM said it is ready (rtl/soc/mirlo_mips.sv: boot_ready), then
 # releases its reset (APF_BRIDGE HOST_STATE bit 0; bit 1: a slot loaded).
 # Nothing else may use SDRAM meanwhile -- the bridge's writes have no
-# backpressure -- so the wait below uses registers only (as MIRLO's BIOS,
-# litex/vendor/patches/litex.patch romboot_wait()):
+# backpressure -- so the wait below uses registers only (as the RISC-V
+# Mirlo's patched LiteX BIOS did, romboot_wait()):
 #   - reset already released at our start (a bitstream loaded over JTAG):
 #     nothing to wait for, and no game: serial boot;
 #   - else wait (20 s at most) for the release; then the game if slot 0 was

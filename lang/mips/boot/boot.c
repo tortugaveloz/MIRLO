@@ -1,6 +1,6 @@
 /* MIRLO's boot ROM on the MIPS SoC, after start.S: the game the Pocket
  * loaded, or LiteX's serial boot (SFL) over the JTAG UART -- the protocol
- * litex/litex_term.py and litex/jtag_run.py speak (LiteX's bios/boot.c). */
+ * tools/jtag/litex_term.py and tools/jtag/jtag_run.py speak (LiteX's bios/boot.c). */
 #include <stdint.h>
 #include <generated/csr.h>
 #include <generated/soc.h>

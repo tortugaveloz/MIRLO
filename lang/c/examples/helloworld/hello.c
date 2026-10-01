@@ -11,12 +11,6 @@
 
 int main(void)
 {
-	// Diagnostic: disable interrupts (clear mstatus.MIE) before anything
-	// else, to test whether an early timer/IRQ trap (with a broken or
-	// unset handler on the current bitstream) is what halts execution
-	// partway through the framebuffer fill below.
-	asm volatile ("csrci mstatus, 8");
-
 	// Diagnostic: paint the framebuffer solid green immediately, to check
 	// via HDMI whether this minimal deferload boot.bin actually executes
 	// on the current bitstream, independent of console/JTAG UART.

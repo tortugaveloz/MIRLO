@@ -6,11 +6,11 @@
         "mirlo"
       ],
       "shortname": "Mirlo",
-      "description": "Mirlo: a RISC-V computer for the Analogue Pocket with MRDP, an N64-style rasterizer",
+      "description": "Mirlo: a MIPS computer for the Analogue Pocket with MRDP, an N64-style rasterizer (experimental)",
       "author": "tortuga",
       "url": "https://github.com/tortugaveloz/MIRLO",
-      "version": "0.8.2",
-      "date_release": "2026-09-28"
+      "version": "0.9.0-mips-experimental",
+      "date_release": "2026-10-01"
     },
     "framework": {
       "target_product": "Analogue Pocket",
@@ -29,7 +29,7 @@
       {
         "name": "default",
         "id": 0,
-        "filename": "riscv.rev"
+        "filename": "mirlo.rev"
       }
     ]
   }

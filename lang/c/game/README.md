@@ -48,16 +48,17 @@ for (;;) {
 
 ## Building
 
-The geometry core's firmware is baked into the bitstream, so the build is
-two-pass (see the top-level README):
+The geometry core's firmware is baked into the bitstream (see the top-level
+README); the program reads one of its variables, so build it against the same
+`lang/c/geom/build/geom.elf` (or pass `GEOM_ELF=`):
 
 ```
-cd ../../../litex && make          # SoC: generates csr.h and friends
-cd ../lang/c/geom && make          # geometry-core firmware (needs csr.h)
-cd ../../../litex && make          # SoC again, with the geometry firmware in it
-cd ../lang/c/game && make          # -> build/build.bin  (make PROG=demo, PROG=videotest, PROG=tone)
+(cd ../../mips && make -f lib.mk VARIANT=game && make -f lib.mk VARIANT=lite)   # once
+(cd ../geom && make)               # geometry-core firmware
+(cd ../audio && make)              # audio-core firmware (PROG=tone embeds it)
+make                               # -> build/build.bin  (make PROG=demo, PROG=videotest, PROG=tone)
 ```
 
 `build/build.bin` is a game-CPU program: put it on the SD card as a Mirlo game
 (`tools/make_mirlo_game.py`) or upload it over the JTAG UART
-(`litex/jtag_program_and_run.sh`).
+(`tools/jtag/jtag_program_and_run.sh`).

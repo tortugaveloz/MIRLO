@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Pack the SD-card release zip: the core as it sits on the Pocket's SD card.
 
-    tools/make_release.py <riscv.rev> <out.zip>
+    tools/make_release.py <mirlo.rev> <out.zip>
 
-<riscv.rev> is the bit-reversed bitstream (tools/package_bitstream.py). The
+<mirlo.rev> is the bit-reversed bitstream (tools/package_bitstream.py). The
 zip holds, from the SD card's root:
 
-    Cores/tortuga.Mirlo/     the core definition (pkg/pocket), riscv.rev,
+    Cores/tortuga.Mirlo/     the core definition (pkg/pocket), mirlo.rev,
                              LICENSE.txt, NOTICE.txt
     Platforms/mirlo.json     the platform (category Computer) and its image
     Platforms/_images/mirlo.bin
@@ -50,7 +50,7 @@ def main():
             if rel.endswith(".rev"):
                 continue                       # the bitstream comes from the argument
             files.append((rel, p))
-    files.append((CORE + "/riscv.rev", rev))
+    files.append((CORE + "/mirlo.rev", rev))
     files.append((CORE + "/LICENSE.txt", os.path.join(ROOT, "LICENSE")))
     files.append((CORE + "/NOTICE.txt", os.path.join(ROOT, "NOTICE")))
     files.sort()

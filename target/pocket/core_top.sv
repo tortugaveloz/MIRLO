@@ -759,7 +759,7 @@ module core_top (
   );
 
   reg [31:0] rtc_counter = 0;
-  localparam SYS_HZ = 62_832_000;   // clk_sys: must follow litex/analogue_pocket.py CLOCK_SPEED
+  localparam SYS_HZ = 62_832_000;   // clk_sys: must follow tools/mirlo_regs.py CLOCK_HZ
   reg [31:0] rtc_second_counter = 0;
 
   reg prev_rtc_valid = 0;
@@ -937,12 +937,8 @@ module core_top (
     end
   end
 
-`ifdef MIRLO_MIPS
-  // MIRLO on MIPS, without LiteX: its own SoC (rtl/soc/mirlo_mips.sv), the same ports
-  mirlo_mips litex (
-`else
-  litex litex (
-`endif
+  // the SoC (rtl/soc/mirlo_mips.sv)
+  mirlo_mips soc (
       .clk_sys(clk_sys),
       .clk_sys2x(clk_mem),
       .clk_sys2x_90deg(clk_mem_180deg),
@@ -1139,7 +1135,7 @@ module core_top (
   assign video_rgb_clock = clk_vid_5_712;
   assign video_rgb_clock_90 = clk_vid_5_712_90deg;
   // Outside DE: the scaler slot ("Set Scaler Slot", rgb[23:13] = slot,
-  // [12:0] = 0). The video PHY (litex/replaced_components.py VideoPocketPHY)
+  // [12:0] = 0). The scan-out (rtl/soc/n64_video.sv)
   // sends green 565 = 8 when the timing generator runs its second
   // resolution (320 x 240, video.json slot 1): exactly rgb888[13].
   assign video_rgb = de_delay ? rgb_delay : {10'd0, rgb_delay[13], 13'd0};

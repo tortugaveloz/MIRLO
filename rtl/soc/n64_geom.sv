@@ -1,6 +1,4 @@
-// The geometry core (litex/analogue_pocket.py add_geometry_subsystem, N64
-// layout): with GEOM_MIPS (the default, projects_n64's qsf) mips_geom (MIPS,
-// rtl/mips/mips_geom.sv), else VexRiscvGeom (rv32i + Zmmul); either has no
+// The geometry core: mips_geom (MIPS, rtl/mips/mips_geom.sv). It has no
 // I-cache (it fetches from its ROM through a port of its own) and has the
 // Vpu4DFixed CFU, whose PUSH port feeds MRDP's command FIFO.
 //   ROM A  0x2000_0000  16 KiB  iBus + dBus (.text.start, .rodata, .data's image)
@@ -8,7 +6,7 @@
 //   ROM B  0x2001_0000  64 KiB  iBus only (code)
 // Anything else on the dBus goes out (n64_bus): SDRAM, the registers.
 // The ROMs are initialised from ROM_A / ROM_B ($readmemh, one 32-bit word a
-// line -- tools/n64_inits.py splits lang/c/geom/build/n64/geom.bin).
+// line -- tools/mips_inits.py splits lang/c/geom/build/geom.bin).
 `default_nettype none
 
 module n64_geom #(
@@ -63,13 +61,8 @@ logic [3:0]  d_sel;
 logic [2:0]  d_cti;
 logic [1:0]  d_bte;
 
-`ifdef GEOM_MIPS
-// the geom core on MIPS (rtl/mips/mips_geom.sv: mips_lite + a data cache
-// equivalent to VexRiscvGeom's), behind the same ports
+// (mips_lite + a write-through data cache, rtl/mips/mips_geom.sv)
 mips_geom cpu (
-`else
-VexRiscvGeom cpu (
-`endif
     .clk, .reset(rst), .externalResetVector(32'h2000_0000),
     .timerInterrupt(1'b0), .softwareInterrupt(1'b0), .externalInterruptArray({31'd0, irq}),
     .CfuPlugin_bus_cmd_valid(cfu_cmd_valid), .CfuPlugin_bus_cmd_ready(cfu_cmd_ready),

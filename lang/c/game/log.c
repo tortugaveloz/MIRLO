@@ -55,7 +55,7 @@ void log_pump(void)
     }
 }
 
-/* Trap reporter, installed as mtvec by lang/linker/init_asm.S whenever it is
+/* Trap reporter, installed as mtvec by lang/mips/linker/init_asm.S whenever it is
  * linked in. Without it the BIOS's vector stays live after an SFL boot, and
  * its isr() only services PLIC claims: a synchronous trap -- e.g. the bus
  * error the Wishbone interconnect returns when a slave has not acked for 1e6

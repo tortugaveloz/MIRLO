@@ -1,6 +1,5 @@
-// Audio core: VexRiscvAudio (rv32i + Zmmul, no FPU, no divider, no caches),
-// or with AUDIO_MIPS defined (Mirlo-N64) mips_lite (rtl/mips/mips_lite.sv)
-// with its own IMEM and DMEM, and a CFU of audio DSP instructions
+// Audio core: mips_lite (rtl/mips/mips_lite.sv: MIPS32's integer subset, no
+// FPU, no caches) with its own IMEM and DMEM, and a CFU of audio DSP instructions
 // (AudioDspCfu.v: the ucode's envelope mixer and resampler). It plays the N64 RSP's audio role (runs the
 // ABI2 command list src/audio/synthesis.c builds) and the AI's (streams PCM
 // into the APF audio FIFO).
@@ -213,12 +212,7 @@ module AudioCore #(
     assign dbg_pc = ib_cmd_pc;
     wire core_rst = rst | ~run;
 
-`ifdef AUDIO_MIPS
-    // Mirlo-N64: the MIPS core (rtl/mips/mips_lite.sv), same ports
     mips_lite #(.RESET_PC(32'h8000_0000)) cpu (
-`else
-    VexRiscvAudio cpu (
-`endif
         .clk                      (clk),
         .reset                    (core_rst),
         .timerInterrupt           (1'b0),

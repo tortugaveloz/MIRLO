@@ -1,6 +1,6 @@
 // The geometry core's RAM (16 KiB): port A is the core's tightly coupled
-// data port (litex/analogue_pocket.py dTcm_*), port B the SoC's Wishbone
-// window. A true dual-port M10K array, 4K x 2 per block, so neither port
+// data port (rtl/soc/n64_geom.sv), port B the game CPU's window on it
+// (rtl/soc/mirlo_mips.sv). A true dual-port M10K array, 4K x 2 per block, so neither port
 // needs a read mux in logic (a shared single port cost ~100 ALMs of muxes
 // and a hold register, more than the full device had left).
 //

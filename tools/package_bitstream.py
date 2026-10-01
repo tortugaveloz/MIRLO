@@ -10,7 +10,7 @@ plausible size, it just never boots.
 Usage: package_bitstream.py <in.rbf> <out.rev> [<archive_dir> <tag>]
 
 If an archive dir and tag are given, a copy is kept there as
-`riscv-<tag>.rev` so a 20-minute build can be A/B tested later without
+`mirlo-<tag>.rev` so a 20-minute build can be A/B tested later without
 recompiling. Bitstreams are not committed to the repository: releases carry
 them (tools/make_release.py).
 """
@@ -38,7 +38,7 @@ def main():
     if len(sys.argv) == 5:
         archive_dir, tag = sys.argv[3], sys.argv[4]
         os.makedirs(archive_dir, exist_ok=True)
-        keep = os.path.join(archive_dir, f"riscv-{tag}.rev")
+        keep = os.path.join(archive_dir, f"mirlo-{tag}.rev")
         shutil.copy2(dst, keep)
         print(f"  archived: {keep}")
 

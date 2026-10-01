@@ -1,15 +1,11 @@
 #!/bin/bash
-# Upload a bare-metal .bin to the Pocket's LiteX RISC-V core over JTAG (USB Blaster)
-# and drop into its console. Requires the "BIOS-in-ROM" bitstream (integrated ROM
-# holds the stock LiteX BIOS + SFL serialboot) and "Enable JTAG UART" ON in the
-# in-core menu (Core Settings).
+# Upload a bare-metal .bin to Mirlo over JTAG (USB Blaster) and drop into its
+# console. Mirlo's boot ROM (lang/mips/boot) falls back to SFL serial boot
+# when the Pocket has not loaded a game (a bitstream loaded over JTAG, see
+# jtag_program_and_run.sh), and asks for a program every half second; this
+# script's litex_term answers the SFL magic and uploads.
 #
 #   ./jtag_boot.sh path/to/build.bin
-#
-# Then, on the Pocket:  in-core menu (select + D-pad-down) -> Core Settings ->
-# "Reset core" -> press A (a few times if the first doesn't take). The BIOS
-# reboots, hits "Booting from serial...", and this script's litex_term answers
-# the SFL magic and uploads.
 #
 # Why the custom relay (jtag_uart_relay.py) instead of litex_term's own
 # --jtag-config: the LiteX JTAGPHY XFER FSM resets on every Capture-DR

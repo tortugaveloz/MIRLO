@@ -65,7 +65,12 @@ module geom_cpu_top (
     wire        cfu_rsp_valid, cfu_rsp_ready;
     wire [31:0] cfu_rsp_out0;
 
+`ifdef GEOM_MIPS
+    // the geom core on MIPS (rtl/mips/mips_geom.sv): the same ports
+    mips_geom cpu (
+`else
     VexRiscvGeom cpu (
+`endif
         .externalResetVector(GEOM_SRAM_BASE),
         .timerInterrupt(1'b0),
         .softwareInterrupt(1'b0),
@@ -124,6 +129,12 @@ module geom_cpu_top (
         .clk(clk),
         .reset(reset)
     );
+
+`ifdef GEOM_MIPS
+    // what the tb's PCPROF samples: the last instruction to reach W
+    wire [31:0] prof_pc = cpu.cpu.w_pc;
+    wire        prof_ret = cpu.cpu.w_valid;
+`endif
 
     Vpu4DFixed #(.DATA_WIDTH(27), .FRAC_BITS(10)) vpu (
         .clk(clk),

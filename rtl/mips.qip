@@ -1,8 +1,8 @@
-# MIRLO on MIPS (docs/mips.md): its own SoC, rtl/soc (no LiteX) -- the game
-# CPU, the geom and audio cores (MIPS), MRDP, SDRAM, the scan-out. The Quartus
-# project: projects_mips/ (MIRLO_MIPS). Before a compile: tools/mirlo_regs.py
-# (the register map) and tools/mips_inits.py (the boot ROM and geom ROM
-# images, after building lang/mips/boot and lang/c/geom with CPU=mips).
+# MIRLO's SoC (docs/mips.md), rtl/soc -- the game CPU, the geom and audio
+# cores (MIPS), MRDP, SDRAM, the scan-out. The Quartus project: projects/.
+# Before a compile: tools/mirlo_regs.py (the register map) and
+# tools/mips_inits.py (the boot ROM and geom ROM images, after building
+# lang/mips/boot and lang/c/geom).
 set_global_assignment -name SYSTEMVERILOG_FILE   [file join $::quartus(qip_path) "soc/sdr_phy.sv"]
 set_global_assignment -name SYSTEMVERILOG_FILE   [file join $::quartus(qip_path) "soc/sdr_ctrl.sv"]
 set_global_assignment -name SYSTEMVERILOG_FILE   [file join $::quartus(qip_path) "soc/sdr_arb.sv"]

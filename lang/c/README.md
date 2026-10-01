@@ -1,9 +1,8 @@
-# C/C++
+# C
 
 ## Examples
 
 * [`helloworld`](./examples/helloworld/) - A simple hello world demonstration in C, with the included `printf()` function.
-* [`helloworld-cpp`](./examples/helloworld-cpp/) - A simple hello world class demonstration in C++, with the included `printf()` function.
 * [`fungus`](./examples/fungus/) - A demo with visuals, sound and controls.
 * [`dhrystone`](./examples/dhrystone/) - The Dhrystone benchmarking program.
 * [`keytest`](./examples/keytest/) - Prints the Pocket's buttons as they are pressed.
@@ -11,62 +10,35 @@
 
 ## Overview
 
-C/C++ is one of the simplest targets because you just need the appropriate `riscv[32/64]-unknown-elf-gcc` and supporting tools, otherwise known as the RISC-V GNU Toolchain. LiteX generates/includes a number of supporting libraries with utility methods and constants for accessing the various parts of the SoC. If you use the included `Makefile` (see any of the `/example` directories) and set up the variables at the top of the file, you will automatically pull in all of those object libraries.
+Your program runs on the game CPU, a 32-bit VR4300-class MIPS
+(little-endian, single-precision FPU). Any MIPS GCC with its binutils builds
+for it: `lang/mips/mips.mk` names them (`MIPS_CC`, `MIPS_BIN`) and sets the
+flags (`-march=vr4300 -mabi=32 -EL -msingle-float`; doubles in software).
 
-This functionality is provided thanks to the generated `variables.mak`, containing variables and references to various directories, and the LiteX included `common.mak` file, which combines the set variables to create the constructs for the user's `Makefile`. A shared linker assembly, which is shared with other languages such as Rust, is located at `/lang/linker`.
+`lang/mips` provides what LiteX's libraries used to:
 
-## Setup
-
-[Build and install the RISC-V GNU Toolchain](https://github.com/riscv/riscv-gnu-toolchain):
-
-(Taken from [the base README](/README.md))
-
-**NOTE:** The Ubuntu repository version of the toolchain is missing some functionality. You may need to manually compile the toolchain anyway.
-
-```bash
-cd ~
-
-# Clone the repo
-git clone https://github.com/riscv/riscv-gnu-toolchain.git
-
-# Install dependencies
-...
-
-# Build the newlib, multilib variant of the toolchain
-./configure --prefix=/opt/riscv --enable-multilib
-make
-```
-
-This will produce binaries like `riscv64-unknown-elf-gcc`. Note that even though they're named `riscv64`, they can be used to build for `riscv32`. The `--enable-multilib` allows building for various RISC-V extensions, so we don't have to create a specialized version of the toolchain.
-
-## Design
-
-LiteX unfortunately does not provide documentation for the libraries that are automatically included; you can see them at `/litex/vendor/litex/litex/soc/software/`. The libraries are:
-
-* `libbase`
-* `libc`
-* `libcompiler_rt`
-* `libfatfs` - Probably not useful
-* `liblitedram` - I wouldn't recommend directly controlling SDRAM, but you can if you wish
-* `libliteeth` - Probably not useful
-* `liblitesata` - Probably not useful
-* `liblitesdcard` - Probably not useful
-* `liblitespi`
-
-There is a collection of custom functions and constants, generated off of SoC parameters such as configuration (CSR) registers, clock speed, etc., available at `/litex/build/litex/software/include/generated/`. This should prevent the need to use a SVD parser like Rust does.
+* `include/generated/` -- `csr.h` (an accessor per register:
+  `apf_input_cont1_key_read()`, `timer0_uptime_cycles_read()`, ...), `soc.h`
+  (`CONFIG_CLOCK_FREQUENCY`, ...) and `mem.h` (the memory regions), from
+  `tools/mirlo_regs.py`;
+* `include/system.h` (cache flushes), `uart.h`, `irq.h`, `console.h`;
+* `lib.mk` -- picolibc (`printf`, `malloc`, the maths library, ...),
+  compiler-rt's builtins and `lib/mirlo_rt.c` (the UART under stdio,
+  delays), built once: `make -f lib.mk VARIANT=game` (the game CPU) and
+  `VARIANT=lite` (the geometry and audio cores);
+* `linker/` -- the program's crt0 (`init_asm.S`, with an exception vector
+  that saves registers, so timer interrupts work) and linker script: the
+  program starts at `0x4000_0000`;
+* `program.mk` -- include it from a Makefile, list `OBJECTS`, and `make`
+  gives `build/<PROGRAM>.bin` (see any of the examples).
 
 ## Building
 
-Due to the libraries and headers LiteX provides, you need to do a full project build in order to have the right assets ready to go.
-
 ```bash
-cd litex
-
-make
+(cd lang/mips && make -f lib.mk VARIANT=game)     # once
+cd lang/c/examples/helloworld && make             # -> build/build.bin
 ```
 
-See [README](/README.md#modifying-the-hardware) for more instructions on how to get the required dependencies and set up the build.
-
-----
-
-The provided C/C++ `Makefile` should set everything up for you. Update the variables at the top of the file, making sure to include all of your object names, and simply run `make`. When it completes, you should find a `build.bin` in your output directory; this is your RISC-V program ready to be copied over or [uploaded to the CPU over UART](/README.md#uart).
+`build/build.bin` is your program: copy it to `Assets/mirlo/common/` on the
+SD card, or upload it over JTAG (`tools/jtag/jtag_program_and_run.sh`, see the
+top-level README).

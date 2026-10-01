@@ -1,3 +1,0 @@
-set_global_assignment -name VERILOG_FILE   [file join $::quartus(qip_path) "../../litex/build/litex/gateware/litex.v"]
-set_global_assignment -name VERILOG_FILE   [file join $::quartus(qip_path) "Ram_1w_1rs_Intel.v"]
-set_global_assignment -name VERILOG_FILE   [file join $::quartus(qip_path) "VexRiscvLitexSmpCluster_Cc1_Iw32Is16384Iy4_Dw32Ds8192Dy2_ITs4DTs4_Ldw32_Ood_Fpu4_Rvc_Nmmu_Nsv_Na_Ndbg.v"]

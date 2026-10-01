@@ -1,13 +1,13 @@
 # MIRLO on MIPS, without LiteX
 
-The `mips` branch moves MIRLO's three cores to MIPS and replaces the LiteX SoC
-with a hand-written SystemVerilog one, built from the same fabric as MIRLO64
-(the SDRAM controller, arbiter and scan-out). The point is to measure the
-move: the geom core ran faster on MIPS in MIRLO64, and this branch shows what
-the whole of Super Mirlo 64 does on it. It also brings MIRLO and MIRLO64
-closer together.
+The `mips` branch (experimental) moves MIRLO's three cores to MIPS and
+replaces the LiteX SoC with a hand-written SystemVerilog one, built from the
+same fabric as MIRLO64 (the SDRAM controller, arbiter and scan-out). LiteX,
+the RISC-V cores and the Rust SDK are gone from this branch; the RISC-V Mirlo
+is `main` (v0.8.2). The point is to measure the move -- the geom core ran
+faster on MIPS in MIRLO64 -- and to bring MIRLO and MIRLO64 closer together.
 
-| Core | RISC-V (LiteX, `master`) | MIPS (`mips`) |
+| Core | RISC-V (LiteX, `main`, v0.8.2) | MIPS (`mips`) |
 |------|--------------------------|---------------|
 | game CPU | VexRiscv-SMP, rv32imafc | `rtl/mips/mips_core.sv`: a 32-bit VR4300, little-endian, single-precision FPU, 16 KiB I / 8 KiB D cache |
 | geom core | VexRiscvGeom, rv32i + Zmmul | `rtl/mips/mips_geom.sv` (mips_lite + D-cache), MIPS32 integer subset |
@@ -18,9 +18,9 @@ path are unchanged.
 
 ## The SoC (`rtl/soc/mirlo_mips.sv`)
 
-`core_top.sv` builds it instead of the LiteX module when `MIRLO_MIPS` is
-defined; the ports are the same. The memory map is MIRLO's, so the firmware
-keeps its addresses:
+`target/pocket/core_top.sv` instantiates it with the ports the LiteX module
+had. The memory map is the RISC-V Mirlo's, so the firmware keeps its
+addresses:
 
 | Address | What |
 |---------|------|
@@ -43,12 +43,12 @@ accessor names (`mrdp_status_read()`, `timer0_uptime_cycles_read()`, ...).
 
 ## Booting
 
-The boot ROM does what MIRLO's patched LiteX BIOS does. It waits, touching
+The boot ROM does what the RISC-V Mirlo's (patched LiteX) BIOS did. It waits, touching
 only registers, for the Pocket to release its reset after loading data slot 0
 to `0x4000_0000`, then jumps there. If the reset was already released (a
 bitstream loaded over JTAG) or nothing was loaded, it falls back to LiteX's
-SFL serial boot over the JTAG UART, so `litex/litex_term.py` and
-`litex/jtag_run.py` work as before.
+SFL serial boot over the JTAG UART, so `tools/jtag/litex_term.py` and
+`tools/jtag/jtag_run.py` work as before.
 
 ## Software
 
@@ -60,8 +60,9 @@ SFL serial boot over the JTAG UART, so `litex/litex_term.py` and
   `make -f lib.mk VARIANT=game` and `VARIANT=lite`.
 - `lang/mips/program.mk`, `lang/mips/linker/`: a game-CPU program (crt0 with
   an exception vector that saves registers, so timer interrupts work).
-- `lang/c/geom`: `make CPU=mips` gives `build/mips/geom.bin`.
-- `lang/c/game`: `make CPU=mips [PROG=...]` gives `build/mips/build.bin`.
+- `lang/c/geom`: `make` gives `build/geom.bin`; `lang/c/audio`: `make` gives
+  `build/main/audio_fw.h`.
+- `lang/c/game`: `make [PROG=...]` gives `build/build.bin`.
 - `tools/mips_inits.py`: the boot ROM and geom ROM images for the bitstream.
 
 ## Simulation
@@ -70,4 +71,15 @@ SFL serial boot over the JTAG UART, so `litex/litex_term.py` and
 model. `obj_soc/tb_soc prog.bin -c <Mcycles> -o <dir>` puts the program where
 the Pocket would load it, prints the UART, and dumps frames.
 `lang/mips/test` holds a CPU self-test and a libc test; the cube demo is
-`lang/c/game` with `CPU=mips`.
+`lang/c/game`. `NOLOAD=1` starts it as a JTAG-loaded bitstream would (the
+boot ROM's serial boot).
+
+## First numbers (RTL simulation)
+
+* Super Mirlo 64's title screen (Goddard's Mario head): 42.4 ms a frame
+  (23.5 fps), game-CPU-bound. The RISC-V build measured 40-46 ms of game CPU
+  per frame on the Pocket (an older build).
+* Dhrystone (`lang/c/examples/dhrystone`, `-O3 -fno-inline`): about 0.50
+  DMIPS/MHz on the game CPU. Its D-cache writes through, so stores cost
+  SDRAM bandwidth; a write-back cache is the first thing to try.
+* Area: 17,075 ALMs (92 %), against 18,323 (99 %) for the LiteX/RISC-V build.

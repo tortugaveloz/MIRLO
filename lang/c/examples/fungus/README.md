@@ -30,7 +30,7 @@ If you're just running the app, some things I like doing are:
 - Touch nothing, and just wait until the fungus starts consuming the pillars
 - Go in any mode and hold down and right.
 
-If you're using this as sample code: This app demonstrates several different features of the Pocket RISC-V core.
+If you're using this as sample code: This app demonstrates several different features of the Mirlo core.
 
 * It draws to the framebuffer;
 * It plays sound;

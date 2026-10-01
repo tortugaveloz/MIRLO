@@ -5,9 +5,9 @@
     e.g. tools/make_mirlo_game.py build/build.bin "My Game.bin" SND0=sound.bin
 
 The Pocket's file browser lists the .bin files in Assets/mirlo/common. The
-BIOS (litex/vendor/litex .../bios/boot.c romboot) loads only the program to
-0x40000000; the game reads its blocks itself, by tag, through the APF
-bridge (data slot 0). File layout:
+Pocket loads the file to 0x40000000 (data slot 0) and the boot ROM
+(lang/mips/boot) jumps to it; the game reads its blocks itself, by tag,
+through the APF bridge. File layout:
 
   program | blocks (each on a 512-byte boundary) | block table | footer
 

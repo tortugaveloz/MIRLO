@@ -11,12 +11,11 @@ file asks for.
 
 How it switches, at boot (lang/c/game/frame.c `frame_set_video`, called by
 the program with the game file header's choice before `frame_init()`):
-the timing generator's `mode` CSR (litex/replaced_components.py
-FixedVideoTimingGenerator: two constant sets, 340 x 280 and 360 x 264 at the
-same 5.712 MHz pixel clock, ~60 Hz both), the scan-out DMA's length, the
-Pocket's scaler slot (sent on the RGB bus during blanking by VideoPocketPHY;
-video.json slot 0 = 268, slot 1 = 320), the clears' width and the geom
-core's screen edges (GDL_FBSIZE). The BIOS's loading screen is always 268.
+the scan-out's `vtg_mode` register (rtl/soc/n64_video.sv: two constant
+timing sets, 340 x 280 and 360 x 264 at the same 5.712 MHz pixel clock,
+~60 Hz both, which also set the frame's length), the Pocket's scaler slot
+(sent on the RGB bus during blanking; video.json slot 0 = 268, slot 1 = 320),
+the clears' width and the geom core's screen edges (GDL_FBSIZE).
 
 The older, manual procedure below (a new pixel clock and timings) still
 applies for any other resolution.
@@ -30,11 +29,11 @@ Note that you want all of your system clocks (CPU, and 2x for SDRAM) to be integ
 
 2. In Quartus, open the `mf_pllbase` megafunction on the left side of the screen. This will open the tool where you can manipulate the clocks for the core. The last two clocks should be the video pixel clock that you chose, the first is your CPU clock (remember to keep it an integer multiple of the video clock), and the second and third clocks are your SDRAM clock (remember to keep it 2x the CPU clock). Enter those values and click finish.
 
-3. In `/litex/analogue_pocket.py`, edit the `CLOCK_SPEED` constant to your new CPU clock speed. Scroll down to `add_video_framebuffer` and insert your vertical and horizontal counts. Please note that you _must_ change the name ("266x240@60Hz") because for some reason LiteX uses this string for some calculations.
+3. Edit the clock constants: `CLOCK_HZ` in `tools/mirlo_regs.py` (then run it) and `SYS_HZ` in `target/pocket/core_top.sv`. Put your counts into `rtl/soc/n64_video.sv` (its two timing sets and the frame's word counts).
 
 4. Update the Pocket `video.json` to your new resolution. Without it, the Pocket won't know what resolution you want to display.
 
-5. Build the LiteX project by running `make` in the `/litex` directory. See LiteX build instructions for more information.
+5. Rebuild the firmware that has the clock compiled in (see the top-level README's build steps).
 
 6. Build the Quartus project by pressing "Build".
 

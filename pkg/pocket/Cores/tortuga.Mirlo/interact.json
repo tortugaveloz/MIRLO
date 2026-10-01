@@ -4,5 +4,6 @@
 {"name":"Start = Select+Start","id":103,"type":"check","enabled":true,"address":"0x1000013C","persist":true,"writeonly":true,"defaultval":0,"value":1},
 {"name":"R = modifier","id":212,"type":"check","enabled":true,"address":"0x10000110","persist":true,"writeonly":true,"defaultval":0,"value":1},
 {"name":"Stick","id":210,"type":"list","enabled":true,"persist":true,"address":"0x10000130","defaultval":0,"options":[{"value":0,"name":"D-pad"},{"value":1,"name":"L stick"},{"value":2,"name":"None"}],"writeonly":true},
-{"name":"D-pad","id":211,"type":"list","enabled":true,"persist":true,"address":"0x10000134","defaultval":0,"options":[{"value":0,"name":"None"},{"value":1,"name":"D-pad"},{"value":2,"name":"R stick"}],"writeonly":true}
+{"name":"D-pad","id":211,"type":"list","enabled":true,"persist":true,"address":"0x10000134","defaultval":0,"options":[{"value":0,"name":"None"},{"value":1,"name":"D-pad"},{"value":2,"name":"R stick"}],"writeonly":true},
+{"name":"L","id":213,"type":"list","enabled":true,"persist":true,"address":"0x10000118","defaultval":0,"options":[{"value":0,"name":"None"},{"value":11,"name":"L2"},{"value":12,"name":"R2"},{"value":13,"name":"L3"},{"value":14,"name":"R3"}],"writeonly":true}
 ],"messages":[]}}

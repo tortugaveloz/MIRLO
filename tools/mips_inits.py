@@ -5,7 +5,7 @@ them by absolute path (Quartus resolves $readmemh next to the file that
 calls it; both files are generated, not committed):
 
   the boot ROM           lang/mips/boot/build/boot.hex
-  the geom core's ROMs   lang/c/geom/build/mips/geom.bin: ROM A the first
+  the geom core's ROMs   lang/c/geom/build/geom.bin: ROM A the first
                          16 KiB, ROM B the 64 KiB from 0x1_0000
 
 The audio core is loaded by the game (lang/c/game/audio_load.c): nothing
@@ -36,7 +36,7 @@ def main():
     if not os.path.exists(boot):
         print(f"WARNING: {boot} missing", file=sys.stderr)
     paths["BOOTROM"] = write("boot.hex", open(boot).readlines() if os.path.exists(boot) else [])
-    geom = os.path.join(R, "lang", "c", "geom", "build", "mips", "geom.bin")
+    geom = os.path.join(R, "lang", "c", "geom", "build", "geom.bin")
     if not os.path.exists(geom):
         print(f"WARNING: {geom} missing", file=sys.stderr)
     g = words_le(geom)
