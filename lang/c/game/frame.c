@@ -133,10 +133,6 @@ static inline uint32_t frame_sync_count(void) { return mrdp_sync_count_read(); }
 static uint32_t  s_clear_rgb = CLEAR_RGB_DEFAULT;
 static uint32_t *s_clear_word;
 
-/* this frame's clear-colour word in its GDL (0: none), for a GDL_F3D task:
- * the geom core patches it with the list's background colour */
-uint32_t *frame_clear_word(void) { return s_clear_word; }
-
 void frame_set_clear_rgb(uint32_t rgb) {
     s_clear_rgb = rgb & 0xFFFFFFu;
     if (s_clear_word) {

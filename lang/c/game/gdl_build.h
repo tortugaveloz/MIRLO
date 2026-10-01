@@ -45,7 +45,8 @@ static inline void gdl_viewport(gdl_cur_t *c, const float scale[4], const float 
     for (int i = 0; i < 4; i++) gdl_f(c, scale[i]);
     for (int i = 0; i < 4; i++) gdl_f(c, trans[i]);
 }
-/* the same in S15.16, without a float (the geom core's translator, geom_f3d.c) */
+/* the same in S15.16, without a float (as the N64's own formats: an F3DEX2
+ * translator in fixed point, Super Mirlo 64's f3d_emit.c) */
 static inline void gdl_viewport_fx(gdl_cur_t *c, const int32_t scale[4], const int32_t trans[4]) {
     gdl_w(c, GDL_HDR(GDL_VIEWPORT, 0));
     for (int i = 0; i < 4; i++) gdl_w(c, (uint32_t)scale[i]);
@@ -62,21 +63,9 @@ static inline void gdl_ccolor(gdl_cur_t *c, uint32_t flags, uint32_t rgba) {
     gdl_w(c, GDL_HDR(GDL_CCOLOR, flags & 0x7u)); gdl_w(c, rgba);
 }
 static inline void gdl_texnorm(gdl_cur_t *c, float inv_tex_size) { gdl_w(c, GDL_HDR(GDL_TEXNORM, 0)); gdl_f(c, inv_tex_size); }
-/* n / d, without a divide instruction (the geom core has none; a texture
- * bind is rare): a shift for a power of two, else shift-and-subtract */
-static inline uint32_t gdl_udiv(uint32_t n, uint32_t d) {
-    if (d == 0u) return 0u;
-    if ((d & (d - 1u)) == 0u) { while (d > 1u) { n >>= 1; d >>= 1; } return n; }
-    uint32_t q = 0u, r = 0u;
-    for (int i = 31; i >= 0; i--) {
-        r = r << 1 | ((n >> i) & 1u);
-        if (r >= d) { r -= d; q |= 1u << i; }
-    }
-    return q;
-}
 /* 1/size in S15.16, rounded to nearest (0: texturing off) */
 static inline void gdl_texnorm_size(gdl_cur_t *c, uint32_t size) {
-    gdl_w(c, GDL_HDR(GDL_TEXNORM, 0)); gdl_w(c, size ? gdl_udiv(65536u + size / 2u, size) : 0u);
+    gdl_w(c, GDL_HDR(GDL_TEXNORM, 0)); gdl_w(c, size ? (65536u + size / 2u) / size : 0u);
 }
 static inline void gdl_fog(gdl_cur_t *c, int on, uint32_t rgba8, float mul, float off) {
     gdl_w(c, GDL_HDR(GDL_FOG, on ? 1 : 0)); gdl_w(c, rgba8); gdl_f(c, mul); gdl_f(c, off);
@@ -105,8 +94,8 @@ static inline void gdl_texbind_scaled(gdl_cur_t *c, int fmt, int siz, int cms, i
 static inline void gdl_texbind_scaled_fx(gdl_cur_t *c, int fmt, int siz, int cms, int cmt, int palette,
                                          int w, int h, const void *src, const void *tlut,
                                          uint32_t sscale, uint32_t tscale) {
-    uint32_t invw = w > 0 ? gdl_udiv(sscale + (uint32_t)w / 2u, (uint32_t)w) : 0u;
-    uint32_t invh = h > 0 ? gdl_udiv(tscale + (uint32_t)h / 2u, (uint32_t)h) : 0u;
+    uint32_t invw = w > 0 ? (sscale + (uint32_t)w / 2u) / (uint32_t)w : 0u;
+    uint32_t invh = h > 0 ? (tscale + (uint32_t)h / 2u) / (uint32_t)h : 0u;
     uint64_t sp = (uint64_t)(uintptr_t)src, tp = (uint64_t)(uintptr_t)tlut;
     gdl_w(c, GDL_HDR(GDL_TEXBIND, 0));
     gdl_w(c, ((uint32_t)(fmt & 0xF)) | ((uint32_t)(siz & 0xF) << 4)
@@ -144,21 +133,7 @@ static inline void gdl_tri2(gdl_cur_t *c, int a, int b, int d, int e, int f, int
     gdl_w(c, ((uint32_t)e << 16) | ((uint32_t)f << 8) | (uint32_t)g);
 }
 static inline void gdl_end(gdl_cur_t *c) { gdl_w(c, GDL_HDR(GDL_END, 0)); }
-/* An F3DEX2 display list for the geom core to translate (GDL_F3D, geom_gdl.h).
- * The translation goes into the rest of the list's buffer, 16 words past this
- * command: room for what the list still gets after it (frame.c's SYNC FULL
- * and GDL_END). */
-#define GDL_F3D_GAP 16u
-static inline void gdl_f3d(gdl_cur_t *c, const void *root, uint32_t *clear_word,
-                           const void *static_lo, const void *static_hi, void *arena, uint32_t arena_bytes) {
-    uint32_t *out = c->p + 1 + GDL_F3D_WORDS + GDL_F3D_GAP;
-    uint32_t words = out < c->end ? (uint32_t)(c->end - out) : 0u;
-    gdl_w(c, GDL_HDR(GDL_F3D, GDL_F3D_WORDS));
-    gdl_w(c, (uint32_t)(uintptr_t)root); gdl_w(c, (uint32_t)(uintptr_t)clear_word);
-    gdl_w(c, (uint32_t)(uintptr_t)out); gdl_w(c, words);
-    gdl_w(c, (uint32_t)(uintptr_t)static_lo); gdl_w(c, (uint32_t)(uintptr_t)static_hi);
-    gdl_w(c, (uint32_t)(uintptr_t)arena); gdl_w(c, arena_bytes);
-}
+
 
 /* words actually written (may exceed the buffer -- check for overflow). */
 static inline uint32_t gdl_used(const gdl_cur_t *c, const uint32_t *buf) { return (uint32_t)(c->p - buf); }
